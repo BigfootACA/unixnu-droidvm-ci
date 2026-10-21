@@ -30,6 +30,7 @@ on:
       - '.github/workflows/mainline.yml'
       - 'scripts/make-reference-device.py'
       - 'scripts/owner-policy-dirs.py'
+      - 'scripts/mainline-bootstrap-placeholders.py'
 
 permissions:
   contents: write
@@ -157,6 +158,9 @@ jobs:
       - name: Build kernel
         working-directory: UniXNU
         run: |
+          # On a clean tree (reference candidate from the release asset) the bootstrap pass reads records that only the
+          # archive builders write: give it ones for the empty placeholders.
+          python3 ../ci/scripts/mainline-bootstrap-placeholders.py "out/$BOARD/tree"
           ./unixnu build kernel -j "$(sysctl -n hw.ncpu)"
 
       - name: Collect
