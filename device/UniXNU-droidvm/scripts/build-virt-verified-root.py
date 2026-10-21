@@ -92,6 +92,8 @@ for source in (ROOT / 'kits/VerifiedRoot/src/verified_root.c', ROOT / 'kits/Veri
             index += 1
         elif value in ('-MF', '-MJ'):
             index += 1
+        elif value.startswith('-I') and not Path(record['directory'], value[2:]).is_dir():
+            pass   # an export directory the clean tree has not created yet (-Wmissing-include-dirs with -Werror)
         elif value not in ('-MD', '-MP'):
             command.append(value)
         index += 1
