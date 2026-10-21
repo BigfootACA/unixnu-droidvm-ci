@@ -583,6 +583,8 @@ bool NativeVirtioBlock::start(IOService *provider)
   if (compatible && compatible->getLength() == 22 &&
       !memcmp(compatible->getBytesNoCopy(), "pci-host-ecam-generic", 22)) {
     if (!startPci(provider)) return false;
+    // Before this function's own setup: a disk without a policy (the ESP, in verified mode) must not keep the others down.
+    startSiblings(provider);
   } else {
     mapping = provider->mapDeviceMemoryWithIndex(0, kIOMapAnywhere | kIOMapInhibitCache);
     if (!mapping || mapping->getLength() < 0x108) return false;
@@ -618,7 +620,6 @@ bool NativeVirtioBlock::start(IOService *provider)
         capacity, native_virtio_first_sector_sha256[0], native_virtio_first_sector_sha256[1],
         native_virtio_first_sector_sha256[2], native_virtio_first_sector_sha256[3]);
   registerService();
-  if (pci) startSiblings(provider);
   return true;
 }
 

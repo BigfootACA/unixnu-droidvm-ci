@@ -25,7 +25,8 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 
 [kernel]
 defconfig = "droidvm_defconfig"
-# The platform expert, the CPU/GIC/timer driver, NativeAES and NativeVirtioBlock bound to the original families.
+# The platform expert, the CPU/GIC/timer driver, NativeAES and NativeVirtioBlock bound to the original families;
+# NativeVirtioBlock verifies every block of the OS and SystemOS disks against the owner policies (root acceptance).
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
@@ -34,8 +35,9 @@ archives = [
   "build-arm-driver.py NativeAES",
   "build-native-aes-bindings.py",
   "prepare-storage-abi.py",
-  "build-arm-driver.py NativeVirtioBlock",
-  "build-native-virtio-bindings.py --component NativeVirtioBlock",
+  "build-virt-verified-root.py",
+  "build-arm-driver.py NativeVirtioBlock --verified-root --verified-root-bundle",
+  "build-native-virtio-bindings.py --component NativeVirtioBlock --directory build/native-virtio-block-verified-bundle",
   "build-virtio-input.py",
   "build-virt-stubs.py",
   "build-libpthread-kernel.py",

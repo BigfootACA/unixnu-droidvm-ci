@@ -28,4 +28,13 @@ for name, path in re.findall(r'^\s*(\w+)=(?:\$\{\w+:-)?\$ROOT/(build/[^\s}"]+\.[
         archive.parent.mkdir(parents=True, exist_ok=True)
         archive.write_bytes(b'!<arch>\n' if archive.suffix == '.a' else b'')
         created.append(path)
+# Archive paths the board's defconfig overrides (CONFIG_XNU_*_ARCHIVE), checked the same way.
+config = tree.parent / '.config'
+if config.is_file():
+    for path in re.findall(r'^CONFIG_XNU_\w+_ARCHIVE="([^"]+\.a)"', config.read_text(), re.M):
+        archive = Path(path.replace('{tree}', str(tree)))
+        if not archive.exists():
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_bytes(b'!<arch>\n')
+            created.append(str(archive.relative_to(tree)) if archive.is_relative_to(tree) else str(archive))
 print('placeholders:', *created, sep='\n  ')

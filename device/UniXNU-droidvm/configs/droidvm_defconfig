@@ -17,7 +17,20 @@ CONFIG_XNU_BOOT_PROGRESS=n
 CONFIG_XNU_DT_PANIC_REGION=y
 CONFIG_XNU_NATIVE_AES=y
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
+# The iOS root: trust caches at runtime, 4K page hashes of 16K code directories, and the owner verification chain
+# (verified root probe -> mounted-root binding audit -> root acceptance -> SystemOS cache mount and dyld startup ->
+# boot manifest). The OS and SystemOS disks are verified against the owner policies of scripts/make-virt-root.py.
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_VERIFIED_ROOT_PROBE=y
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE="{tree}/build/native-virtio-block-verified-bundle/libNativeVirtioBlock.a"
+CONFIG_XNU_VERIFIED_ROOT_ARCHIVE="{tree}/build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a"
 # NativeVirtioInput and its HID devices (scripts/build-virtio-input.py); nothing references them, so force_load.
 CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/virt-stubs/libVirtStubs.a -Wl,-force_load,{tree}/build/virtio-input/libVirtioInput.a"
