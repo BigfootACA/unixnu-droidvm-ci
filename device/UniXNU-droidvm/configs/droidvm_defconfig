@@ -9,6 +9,8 @@ CONFIG_XNU_NATIVE_ARCH_TIMER=y
 # The Hi1616 test host is ARMv8.0: no PAN.
 CONFIG_XNU_NATIVE_PAN=n
 CONFIG_XNU_BOOT_PROGRESS=n
+# The BCM2837 panic log at PA 0x3c0fc000 is PCIe MMIO on QEMU virt and unmapped on crosvm: take it from the ADT.
+CONFIG_XNU_DT_PANIC_REGION=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/virt-stubs/libVirtStubs.a"
