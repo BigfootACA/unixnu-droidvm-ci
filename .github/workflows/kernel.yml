@@ -103,7 +103,17 @@ jobs:
 
       - name: Build kernel
         working-directory: UniXNU
-        run: ./unixnu build kernel -j "$(sysctl -n hw.ncpu)" $UNIXNU_LOCAL
+        run: |
+          jobs="-j $(sysctl -n hw.ncpu)"
+          tree="out/$DEVICE/tree"
+          record="$tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json"
+          if [ ! -f "$record" ]; then
+            # From scratch the bootstrap pass stops at its archive checks before make (headers and firehose are
+            # installed by then): give it empty archives, then run the real build.
+            ./unixnu build kernel $jobs $UNIXNU_LOCAL || echo "== first pass stopped as expected on a clean tree"
+            python3 ../ci/scripts/placeholder-archives.py "$tree"
+          fi
+          ./unixnu build kernel $jobs $UNIXNU_LOCAL
 
       - name: Collect
         if: always()
