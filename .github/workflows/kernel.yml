@@ -185,12 +185,15 @@ jobs:
             (cd "$board/tree" && find build -maxdepth 4 \( -name '*.a' -o -name 'mach.*' -o -name '*.json' \) -type f -size -400M \
                | tar -cf - -T -) > collect/build.tar || true
           fi
-          [ -d "$board/kernel" ] && tar -cf collect/kernel.tar -C "$board" kernel || true
-          tar -czf binaries.tgz -C collect $(cd collect && ls | grep -v '^logs$') 2>/dev/null || true
-          if [ -n "$ARTIFACT_KEY" ] && [ -s binaries.tgz ]; then
-            openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ARTIFACT_KEY -in binaries.tgz -out binaries.tgz.enc
+          # Two encrypted artifacts: the prelinked kernel alone (what a boot test needs) and the rest of the build.
+          [ -d "$board/kernel" ] && tar -czf kernel.tgz -C "$board" kernel || true
+          [ -s collect/build.tar ] && gzip -c collect/build.tar > build.tgz || true
+          if [ -n "$ARTIFACT_KEY" ]; then
+            for name in kernel build; do
+              [ -s $name.tgz ] && openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ARTIFACT_KEY -in $name.tgz -out $name.tgz.enc
+            done
           fi
-          ls -la collect binaries.tgz* || true
+          ls -la collect *.tgz* || true
         env:
           ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
 
@@ -202,11 +205,22 @@ jobs:
           path: collect/logs
           if-no-files-found: ignore
 
-      - name: Upload binaries (encrypted)
+      - name: Upload kernel (encrypted)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ env.DEVICE }}
-          path: binaries.tgz.enc
+          name: kernel-${{ env.DEVICE }}
+          path: kernel.tgz.enc
           if-no-files-found: ignore
+          compression-level: 0
           retention-days: 14
+
+      - name: Upload build (encrypted)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ env.DEVICE }}
+          path: build.tgz.enc
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 7

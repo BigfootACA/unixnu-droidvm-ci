@@ -14,7 +14,11 @@ LAST=$((TOTAL - 34 - 1))                     # the backup GPT takes the last 33 
 LAST=$(((LAST + 1) / 2048 * 2048 - 1))       # keep the partition a whole number of MiB
 SECTORS=$((LAST - FIRST + 1))
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+cleanup() {
+  [ -f "$WORK/fat.img" ] && rm -f -- "$WORK/fat.img"
+  rmdir -- "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
 truncate -s $((SECTORS * 512)) "$WORK/fat.img"
 mformat -i "$WORK/fat.img" -F -v UNIXNUESP -T "$SECTORS" -h 64 -s 32 ::
 mcopy -s -i "$WORK/fat.img" "$ESP"/* ::/

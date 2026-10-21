@@ -36,7 +36,7 @@ if not re.fullmatch(r'[A-Za-z0-9_=.,: +\-/]*', args.args):
 
 esp = args.output
 if esp.exists():
-    shutil.rmtree(esp)
+    raise SystemExit(f'{esp} exists: give a new directory (old ESPs are not deleted wholesale)')
 payloads = esp / 'EFI/UniXNU/Payloads'
 payloads.mkdir(parents=True)
 (esp / 'EFI/BOOT').mkdir(parents=True)
