@@ -25,6 +25,11 @@ CODE=$WORK/code.fd
 cp "$FIRMWARE" "$CODE"
 truncate -s 64M "$CODE"
 : > "$LOG"
+if [ -d "$ESP" ]; then
+  ESP_DRIVE="file=fat:$ESP"
+else
+  ESP_DRIVE="file=$ESP"                      # a disk image (scripts/make-esp-image.sh)
+fi
 set +e
 timeout --foreground "$TIMEOUT" qemu-system-aarch64 \
   -M virt,gic-version=3,virtualization=off,secure=off -accel "$ACCEL" -cpu "$CPU" \
@@ -32,7 +37,7 @@ timeout --foreground "$TIMEOUT" qemu-system-aarch64 \
   -chardev stdio,id=ser0,logfile="$LOG",signal=off -serial chardev:ser0 \
   -drive if=pflash,format=raw,readonly=on,file="$CODE" \
   -drive if=pflash,format=raw,file="$VARS" \
-  -drive if=none,id=esp,format=raw,readonly=on,file=fat:"$ESP" -device virtio-blk-pci,drive=esp \
+  -drive if=none,id=esp,format=raw,readonly=on,"$ESP_DRIVE" -device virtio-blk-pci,drive=esp \
   "$@" < /dev/null
 status=$?
 set -e

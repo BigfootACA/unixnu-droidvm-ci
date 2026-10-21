@@ -22,8 +22,11 @@ on:
         description: UniXNU-sheng commit or branch
         default: 7562a779ebdbdedc17c4c7274ba993acbbec8188
       xcode:
-        description: Xcode application on the runner
-        default: /Applications/Xcode_15.4.app
+        description: Xcode application on the runner (empty = the runner default)
+        default: ''
+      runner:
+        description: macOS runner image
+        default: macos-15
   push:
     paths:
       - 'device/**'
@@ -31,13 +34,13 @@ on:
 
 jobs:
   kernel:
-    runs-on: macos-14
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 300
     env:
       DEVICE: ${{ inputs.device || 'droidvm' }}
       UNIXNU_REF: ${{ inputs.unixnu_ref || 'fb2bb310564ce66779e472a021881cf7c5764919' }}
       SHENG_REF: ${{ inputs.sheng_ref || '7562a779ebdbdedc17c4c7274ba993acbbec8188' }}
-      XCODE: ${{ inputs.xcode || '/Applications/Xcode_15.4.app' }}
+      XCODE: ${{ inputs.xcode }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,9 +52,11 @@ jobs:
 
       - name: Toolchain
         run: |
-          sudo xcode-select -s "$XCODE"
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          ls -d /Applications/Xcode*.app
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+          xcrun -f mig iig || true
           brew install llvm lld cmake ninja unifdef mtools dtc
           python3 -m pip install --upgrade pip
 
