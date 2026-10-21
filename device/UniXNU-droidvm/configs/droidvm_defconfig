@@ -10,8 +10,10 @@ CONFIG_XNU_ARMVIRT_PLATFORM=y
 CONFIG_XNU_ARM_DT_PLATFORM=n
 CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
-# The Hi1616 test host is ARMv8.0: no PAN.
-CONFIG_XNU_NATIVE_PAN=n
+# PAN on ARMv8.1+ (Kunpeng 920, SM8750): without it the kernel leaves SCTLR_EL1.SPAN clear, every exception sets
+# PSTATE.PAN, and copyio to user memory faults forever (seen as a fast-fault loop once launchd runs). The ARMv8.0
+# Hi1616 host (.52) therefore cannot run this kernel.
+CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_BOOT_PROGRESS=n
 # The BCM2837 panic log at PA 0x3c0fc000 is PCIe MMIO on QEMU virt and unmapped on crosvm: take it from the ADT.
 CONFIG_XNU_DT_PANIC_REGION=y

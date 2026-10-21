@@ -5,7 +5,8 @@
 #
 # highmem=off keeps the PCIe ECAM (0x3f000000) and the BARs below 4 GiB, where the ADT describes them.
 # Environment: CPUS (1), MEM_MIB (2048), TIMEOUT (seconds, 120), ACCEL (kvm), CPU (host), FIRMWARE (AAVMF code image),
-# SCREENSHOT (PPM path) with SCREENSHOT_AT (seconds after start, comma separated: one file per time, suffixed).
+# SCREENSHOT (PPM path) with SCREENSHOT_AT (seconds after start, comma separated: one file per time, suffixed);
+# each screenshot also saves the vCPU registers (monitor info registers -a) beside it as .regs.
 # The serial console goes to LOG (default ESP_DIR/../serial.log) and to stdout.
 set -euo pipefail
 ESP=$(realpath "$1")
@@ -46,7 +47,18 @@ for index, at in enumerate(times):
     target = path if len(times) == 1 else path.replace('.ppm', f'-{int(at)}s.ppm')
     try:
         s = socket.socket(socket.AF_UNIX); s.connect(sock)
-        s.sendall(f'screendump {target}\n'.encode()); time.sleep(1); s.close()
+        s.settimeout(3)
+        s.sendall(f'screendump {target}\n'.encode()); time.sleep(1)
+        s.sendall(b'info registers -a\n'); time.sleep(1)
+        registers = b''
+        try:
+            while chunk := s.recv(65536):
+                registers += chunk
+        except OSError:
+            pass
+        s.close()
+        with open(target.replace('.ppm', '.regs'), 'wb') as out:
+            out.write(registers)
     except OSError as error:
         print('screenshot failed:', error, file=sys.stderr)
 PY
