@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create empty placeholder archives for the bootstrap pass of a from-scratch kernel build.
+"""Create empty placeholder archives (and objects) for the bootstrap pass of a from-scratch kernel build.
 
 build-xnu-4k-baseline.sh checks `test -f "$ARCHIVE"` for every enabled archive before it runs make, but the archive
 builders read the compile records (and link.filelist) that only a make pass leaves behind. On a clean tree the
@@ -20,12 +20,12 @@ if record.is_file():
     raise SystemExit(0)
 checked = set(re.findall(r'test -f "\$(\w+)"', script))
 created = []
-for name, path in re.findall(r'^\s*(\w+)=(?:\$\{\w+:-)?\$ROOT/(build/[^\s}"]+\.a)', script, re.M):
+for name, path in re.findall(r'^\s*(\w+)=(?:\$\{\w+:-)?\$ROOT/(build/[^\s}"]+\.[ao])', script, re.M):
     if name not in checked:
         continue
     archive = tree / path
     if not archive.exists():
         archive.parent.mkdir(parents=True, exist_ok=True)
-        archive.write_bytes(b'!<arch>\n')
+        archive.write_bytes(b'!<arch>\n' if archive.suffix == '.a' else b'')
         created.append(path)
 print('placeholders:', *created, sep='\n  ')
