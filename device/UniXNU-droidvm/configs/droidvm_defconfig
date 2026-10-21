@@ -1,0 +1,14 @@
+# Kernel configuration of the virtual machine board. CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build.
+# Stage 1: reach the platform expert and print the console on the PL011 (patches/xnu/virt-pl011-uart.patch).
+
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_ARMVIRT_PLATFORM=y
+CONFIG_XNU_ARM_DT_PLATFORM=n
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+# The Hi1616 test host is ARMv8.0: no PAN.
+CONFIG_XNU_NATIVE_PAN=n
+CONFIG_XNU_BOOT_PROGRESS=n
+
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_EXTRA_LD_ARCHIVES=""

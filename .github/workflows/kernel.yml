@@ -66,6 +66,9 @@ jobs:
             git -C device submodule update --init --recursive --filter=blob:none
           else
             cp -R ci/device/UniXNU-$DEVICE device
+            # A device patches/xnu replaces the UniXNU one as a module: carry the UniXNU patches beside ours.
+            if [ -d device/patches/xnu ]; then cp -n UniXNU/patches/xnu/*.patch device/patches/xnu/; fi
+            ls device/patches/xnu
           fi
           # Local overrides of UniXNU modules (drivers/<name>, kits/<name>, scripts/...): the same layout as UniXNU.
           if [ -d ci/local ]; then echo "UNIXNU_LOCAL=--local $PWD/ci/local" >> "$GITHUB_ENV"; fi
@@ -83,6 +86,20 @@ jobs:
           ./unixnu defconfig "${{ inputs.defconfig || format('{0}_defconfig', env.DEVICE) }}" -D ../device
           ./unixnu fetch
           ./unixnu status $UNIXNU_LOCAL || true
+
+      - name: Prefetch API listings
+        # prepare-xnu-source.py lists directories with the unauthenticated GitHub API, which is rate limited on
+        # shared runners; fill its cache with authenticated requests instead.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sources="UniXNU/out/$DEVICE/tree/.cache/sources"
+          mkdir -p "$sources"
+          api=repos/apple-oss-distributions/xnu/contents
+          gh api "$api/iokit/DriverKit?ref=xnu-10063.121.3" > "$sources/xnu-driverkit-10063.121.3.json"
+          gh api "$api/iokit/DriverKit/crypto?ref=xnu-10063.121.3" > "$sources/xnu-driverkit-crypto-10063.121.3.json"
+          gh api "$api/EXTERNAL_HEADERS/TrustCache?ref=xnu-8796.101.5" > "$sources/xnu-trustcache-8796.101.5.json"
+          ls -la "$sources"
 
       - name: Build kernel
         working-directory: UniXNU

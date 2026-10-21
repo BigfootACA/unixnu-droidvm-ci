@@ -1,0 +1,55 @@
+# Board description of the UniXNU virtual machine board: QEMU/KVM `virt` first, then DroidVM crosvm on Gunyah.
+# One kernel serves both machines; the machine differences live in the ADT (scripts/make-virt-adt.py).
+
+[board]
+name = "droidvm"
+soc = "virt"
+description = "QEMU/KVM virt and DroidVM crosvm (Gunyah) virtual machine"
+kit = "droidvm"
+
+# The target OS image is the same as sheng: the unchanged iPad7,1 iPadOS 17.7.11 restore image,
+# so the prelink and the userdata layout reuse the qualified kernelcache.
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
+
+[ipsw.sha256]
+"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
+"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+
+[kernel]
+defconfig = "droidvm_defconfig"
+# Stage 1: the platform expert, the CPU/GIC/timer driver and the source corecrypto; console on the PL011.
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-arm-driver.py ArmVirtPlatform",
+  "build-arm-driver.py ArmCpu",
+]
+
+[kernel.prelink]
+tool = "kits/NativePrelink/emit_prelink.py"
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
+slide = "-0x1000000"
+early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+roots = [
+  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
+  "com.apple.driver.AppleARMPlatform",
+  "com.apple.driver.AppleMobileFileIntegrity",
+  "com.apple.filesystems.apfs",
+  "com.apple.iokit.IOReportFamily",
+  "com.apple.iokit.IOStorageFamily",
+  "com.apple.kec.Libm",
+  "com.apple.kec.corecrypto",
+  "com.apple.kext.AppleMatch",
+  "com.apple.kext.CoreTrust",
+  "com.apple.security.AppleImage4",
+  "com.apple.security.sandbox",
+]
