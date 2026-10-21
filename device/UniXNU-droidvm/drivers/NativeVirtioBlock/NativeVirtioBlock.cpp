@@ -38,7 +38,9 @@ volatile uint32_t native_virtio_ready = 0;
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
 int native_verified_block_root_authorized(dev_t device);
 // Provided by NativeUfs when linked: -1 not a UFS window, else 1/0 for the signed volume UUID.
-int native_ufs_block_authenticates(IOService *, const char *, uint8_t *) __attribute__((weak));
+// UniXNU-droidvm: the kernel is linked statically, so an undefined weak reference does not link; this weak default
+// (no UFS window) yields to NativeUfs's definition when that driver is linked.
+__attribute__((weak)) int native_ufs_block_authenticates(IOService *, const char *, uint8_t *) { return -1; }
 int native_verified_block_volume_device(const char *, dev_t *, char *, size_t);
 volatile uint32_t native_verified_block_root_device = 0;
 volatile uint32_t native_verified_block_root_media_matches = 0;
@@ -364,7 +366,7 @@ static int verifiedVolumeQuery(dev_t device, const char *expectedUUID, uint8_t *
       ++depth;
       NativeVirtioBlock *block = OSDynamicCast(NativeVirtioBlock, provider);
       if (!block) {
-        if (native_ufs_block_authenticates) {
+        {   // always defined (weak default above)
           int ufs = native_ufs_block_authenticates(provider, uuid->getCStringNoCopy(), manifestDigest);
           if (ufs >= 0) {
             authenticated = ufs == 1;
