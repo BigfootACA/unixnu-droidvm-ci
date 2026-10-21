@@ -31,6 +31,8 @@ CONFIG_XNU_OWNER_CACHE_MOUNT=y
 CONFIG_XNU_OWNER_CACHE_STARTUP=y
 # Let dyld map the shared cache from the authenticated SystemOS volume (neither the root nor a preboot volume here).
 CONFIG_XNU_OWNER_CACHE_CARRIER=y
+# Union-mount SystemOS over / so the cryptex files (libobjc-trampolines, private frameworks) appear at their paths.
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
 CONFIG_XNU_OWNER_BOOT_MANIFEST=y
 # Data: a volatile RAM disk (NativeRamBlock) seeded by DarwinBoot from the entry initrd (ci/scripts/make-data-seed.sh),
 # mounted read-write at /private/var by the owner Data mount.
