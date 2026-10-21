@@ -32,6 +32,7 @@ archives = [
   "build-arm-driver.py ArmVirtPlatform",
   "build-arm-driver.py ArmCpu",
   "build-virt-stubs.py",
+  "build-libpthread-kernel.py",
 ]
 
 [kernel.prelink]

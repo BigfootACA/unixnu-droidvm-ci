@@ -6,7 +6,8 @@
 # Environment: WORK (/data/local/tmp/unixnu), MEM_MIB (2048), CPUS (1), PROTECTION (without-firmware |
 # pseudo-unprotected | none), SWIOTLB_MIB (64), EXTRA (more crosvm arguments).
 # Logs: $WORK/serial-sbsa.log (PL011 at 0x6000, the XNU console), $WORK/serial-16550.log (UEFI console at 0x3f8),
-# $WORK/crosvm.log. The VM is stopped through the control socket: never kill -9 crosvm, it leaks Gunyah memory.
+# $WORK/crosvm.log. Without --hugepages the host fails guest page faults with ENOMEM once the kernel touches
+# its window. The VM is stopped through the control socket: never kill -9 crosvm, it leaks Gunyah memory.
 set -u
 DISK=$1
 SECONDS_TO_RUN=${2:-60}
@@ -35,6 +36,7 @@ export LD_LIBRARY_PATH=$DROIDVM/usr/lib:$DROIDVM/lib
 "$DROIDVM/usr/bin/crosvm" --extended-status run --name unixnu --mem "$MEM_MIB" --cpus "$CPUS" \
   --hypervisor gunyah $PROTECT \
   --no-balloon --no-pmu --no-rng --no-smt --no-usb --disable-sandbox \
+  --hugepages --prepare-lend-mthp-mode chunked \
   --socket "$SOCK" \
   --block "path=$DISK,lock=false,ro=true" \
   --serial "type=file,hardware=sbsa,num=1,path=$WORK/serial-sbsa.log,console,earlycon" \
