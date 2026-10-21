@@ -82,6 +82,8 @@ class NativeVirtioBlock : public IOBlockStorageDevice {
   IOMemoryMap *mapping = nullptr;
   // The PCI transport (NativeVirtioPci.h) maps its own windows; registers stays 0 for it.
   bool pci = false;
+  // A sibling (startSiblings) is published by the first function only once every function is set up.
+  bool deferRegistration = false;
   virtio_pci::Transport transport;
   IOBufferMemoryDescriptor *queueMemory = nullptr;
   IOBufferMemoryDescriptor *transferMemory = nullptr;
@@ -284,23 +286,38 @@ bool NativeVirtioBlock::startPci(IOService *provider)
   return pci;
 }
 
+// Every further function is set up before any of them is published: the root waits only for its own media, and the
+// owner SystemOS mount at init looks its volume up without waiting, so no disk may become visible before the others.
 void NativeVirtioBlock::startSiblings(IOService *provider)
 {
   if (pciIndex() != 0 || !mapping) return;
   unsigned total = virtio_pci::count(static_cast<uintptr_t>(mapping->getVirtualAddress()), mapping->getLength(),
                                      virtio_pci::deviceBlock);
+  NativeVirtioBlock *started[8] = {};
   for (unsigned index = 1; index < total && index < 8; ++index) {
     NativeVirtioBlock *sibling = new NativeVirtioBlock;
     OSNumber *number = OSNumber::withNumber(index, 32);
-    bool started = sibling && number && sibling->init(nullptr) && sibling->setProperty(pciIndexKey, number) &&
-                   sibling->attach(provider);
-    if (started && !sibling->start(provider)) {
-      sibling->detach(provider);
-      started = false;
+    bool ok = sibling && number && sibling->init(nullptr) && sibling->setProperty(pciIndexKey, number) &&
+              sibling->attach(provider);
+    if (ok) {
+      sibling->deferRegistration = true;
+      if (!sibling->start(provider)) {
+        sibling->detach(provider);
+        ok = false;
+      }
     }
-    if (!started) IOLog("NativeVirtioBlock: virtio-blk function %u did not start\n", index);
+    if (ok) {
+      started[index] = sibling;   // the provider retains it while attached; this reference is dropped after publication
+    } else {
+      IOLog("NativeVirtioBlock: virtio-blk function %u did not start\n", index);
+      OSSafeReleaseNULL(sibling);
+    }
     OSSafeReleaseNULL(number);
-    OSSafeReleaseNULL(sibling);   // an attached, started sibling is retained by its provider
+  }
+  for (unsigned index = 1; index < 8; ++index) {
+    if (!started[index]) continue;
+    started[index]->registerService();
+    started[index]->release();
   }
 }
 
@@ -621,7 +638,7 @@ bool NativeVirtioBlock::start(IOService *provider)
   IOLog("NativeVirtioBlock: %s, %llu sectors, sector 0 read (%02x%02x%02x%02x...)\n", pci ? "virtio-pci" : "virtio-mmio",
         capacity, native_virtio_first_sector_sha256[0], native_virtio_first_sector_sha256[1],
         native_virtio_first_sector_sha256[2], native_virtio_first_sector_sha256[3]);
-  registerService();
+  if (!deferRegistration) registerService();
   return true;
 }
 
