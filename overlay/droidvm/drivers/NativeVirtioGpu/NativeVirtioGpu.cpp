@@ -68,6 +68,8 @@ struct Gpu {
 };
 
 Gpu gpu;
+// The cursor queue is never used, but crosvm activates a virtio-gpu only with both of its queues enabled.
+IOBufferMemoryDescriptor *cursorQueue;
 IOBufferMemoryDescriptor *backing;
 IOMemoryMap *framebufferMap;
 
@@ -123,6 +125,21 @@ bool configure()
   gpu.available()[0] = 1;   // VIRTQ_AVAIL_F_NO_INTERRUPT: polled
   dmaBarrier();
   if (!gpu.transport.enableQueue(0, gpu.size, gpu.physical, gpu.physical + 1024, gpu.physical + 2048)) return false;
+  uint16_t cursorMaximum = gpu.transport.queueMaximum(1);
+  uint16_t cursorSize = cursorMaximum < queueEntries ? cursorMaximum : queueEntries;
+  cursorQueue = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+    static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous), 4096, 4096);
+  if (!cursorQueue || !cursorSize) { native_virtio_gpu_stats[1] = 12; return false; }
+  IOByteCount cursorLength = 0;
+  uint64_t cursorPhysical = cursorQueue->getPhysicalSegment(0, &cursorLength);
+  if (!cursorPhysical || cursorLength < 4096) { native_virtio_gpu_stats[1] = 12; return false; }
+  bzero(cursorQueue->getBytesNoCopy(), 4096);
+  reinterpret_cast<volatile uint16_t *>(static_cast<unsigned char *>(cursorQueue->getBytesNoCopy()) + 1024)[0] = 1;
+  dmaBarrier();
+  if (!gpu.transport.enableQueue(1, cursorSize, cursorPhysical, cursorPhysical + 1024, cursorPhysical + 2048)) {
+    native_virtio_gpu_stats[1] = 12;
+    return false;
+  }
   gpu.transport.setStatus(virtio_pci::statusAcknowledge | virtio_pci::statusDriver | virtio_pci::statusFeaturesOk |
                           virtio_pci::statusDriverOk);
   return (gpu.transport.status() & 15) == 15;
