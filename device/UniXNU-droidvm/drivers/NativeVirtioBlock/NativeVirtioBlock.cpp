@@ -9,6 +9,7 @@
 #include <libkern/crypto/sha2.h>
 #include <kern/clock.h>
 #include <kern/task.h>
+#include "NativeVirtioPci.h"
 
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
 #include "verified_root.h"
@@ -71,24 +72,14 @@ struct Request { uint32_t operation; uint32_t reserved; uint64_t sector; };
 struct Used { uint32_t id; uint32_t length; };
 static_assert(sizeof(Descriptor) == 16 && sizeof(Request) == 16 && sizeof(Used) == 8, "VirtIO wire layout");
 inline void dmaBarrier() { __asm__ volatile("dmb osh" ::: "memory"); }
-// virtio_pci_common_cfg (VirtIO 1.2 4.1.4.3)
-enum : unsigned {
-  pciDeviceFeatureSelect = 0x00, pciDeviceFeature = 0x04, pciDriverFeatureSelect = 0x08, pciDriverFeature = 0x0c,
-  pciDeviceStatus = 0x14, pciConfigGeneration = 0x15, pciQueueSelect = 0x16, pciQueueSize = 0x18,
-  pciQueueEnable = 0x1c, pciQueueNotifyOff = 0x1e, pciQueueDesc = 0x20, pciQueueDriver = 0x28, pciQueueDevice = 0x30,
-};
-// virtio_pci_cap cfg_type
-enum : unsigned { pciCapCommon = 1, pciCapNotify = 2, pciCapIsr = 3, pciCapDevice = 4 };
 }
 
 class NativeVirtioBlock : public IOBlockStorageDevice {
   OSDeclareDefaultStructors(NativeVirtioBlock)
   IOMemoryMap *mapping = nullptr;
-  // The PCI transport maps one window per capability; registers stays 0 for it.
+  // The PCI transport (NativeVirtioPci.h) maps its own windows; registers stays 0 for it.
   bool pci = false;
-  IOMemoryMap *pciMaps[5] = {};
-  uintptr_t pciWindow[5] = {};
-  uintptr_t pciNotifyAddress = 0;
+  virtio_pci::Transport transport;
   IOBufferMemoryDescriptor *queueMemory = nullptr;
   IOBufferMemoryDescriptor *transferMemory = nullptr;
   IOLock *gate = nullptr;
@@ -126,48 +117,23 @@ class NativeVirtioBlock : public IOBlockStorageDevice {
     write32(offset, static_cast<uint32_t>(value));
     write32(offset + 4, static_cast<uint32_t>(value >> 32));
   }
-  template <typename T> T pciRead(unsigned window, unsigned offset) const {
-    return *reinterpret_cast<volatile T *>(pciWindow[window] + offset);
-  }
-  template <typename T> void pciWrite(unsigned window, unsigned offset, T value) {
-    *reinterpret_cast<volatile T *>(pciWindow[window] + offset) = value;
-    __asm__ volatile("dsb oshst" ::: "memory");
-  }
-  void pciWriteAddress(unsigned offset, uint64_t value) {
-    pciWrite<uint32_t>(pciCapCommon, offset, static_cast<uint32_t>(value));
-    pciWrite<uint32_t>(pciCapCommon, offset + 4, static_cast<uint32_t>(value >> 32));
-  }
-  bool transportMapped() const { return pci ? pciWindow[pciCapCommon] != 0 : registers != 0; }
-  uint8_t deviceStatus() const {
-    return pci ? pciRead<uint8_t>(pciCapCommon, pciDeviceStatus) : static_cast<uint8_t>(read32(0x70));
-  }
+  bool transportMapped() const { return pci ? transport.isOpen() : registers != 0; }
+  uint8_t deviceStatus() const { return pci ? transport.status() : static_cast<uint8_t>(read32(0x70)); }
   void setDeviceStatus(uint8_t value) {
-    if (pci) pciWrite<uint8_t>(pciCapCommon, pciDeviceStatus, value);
+    if (pci) transport.setStatus(value);
     else write32(0x70, value);
   }
-  uint32_t deviceFeatures(uint32_t select) {
-    if (!pci) { write32(0x14, select); return read32(0x10); }
-    pciWrite<uint32_t>(pciCapCommon, pciDeviceFeatureSelect, select);
-    return pciRead<uint32_t>(pciCapCommon, pciDeviceFeature);
-  }
-  void setDriverFeatures(uint32_t select, uint32_t value) {
-    if (!pci) { write32(0x24, select); write32(0x20, value); return; }
-    pciWrite<uint32_t>(pciCapCommon, pciDriverFeatureSelect, select);
-    pciWrite<uint32_t>(pciCapCommon, pciDriverFeature, value);
-  }
   void notifyQueue() {
-    if (!pci) { write32(0x50, 0); return; }
-    *reinterpret_cast<volatile uint16_t *>(pciNotifyAddress) = 0;
-    __asm__ volatile("dsb oshst" ::: "memory");
+    if (pci) transport.notify(0);
+    else write32(0x50, 0);
   }
   void acknowledgeInterrupt() {
-    if (pci) { if (pciWindow[pciCapIsr]) (void)pciRead<uint8_t>(pciCapIsr, 0); return; }
+    if (pci) { transport.acknowledgeInterrupt(); return; }
     uint32_t interrupts = read32(0x60) & 3;
     if (interrupts) write32(0x64, interrupts);
   }
   bool readCapacity();
   bool startPci(IOService *provider);
-  IOMemoryMap *mapPhysical(uint64_t physical, uint64_t length, uintptr_t *address);
   bool reset();
   bool configureQueue();
   IOReturn readSectors(uint64_t sector, uint32_t bytes);
@@ -231,21 +197,23 @@ bool NativeVirtioBlock::reset()
 bool NativeVirtioBlock::configureQueue()
 {
   if (!reset()) return false;
-  setDeviceStatus(1);
-  setDeviceStatus(3);
-  uint32_t lowFeatures = deviceFeatures(0);
-  uint32_t highFeatures = deviceFeatures(1);
   // A read-only backend and VIRTIO_F_VERSION_1 are mandatory for this driver.
-  if (!(lowFeatures & (1U << 5)) || !(highFeatures & 1)) return false;
-  setDriverFeatures(0, 1U << 5);
-  setDriverFeatures(1, 1);
-  setDeviceStatus(11);
-  if (!(deviceStatus() & 8)) return false;
   if (pci) {
-    pciWrite<uint16_t>(pciCapCommon, pciQueueSelect, 0);
-    if (pciRead<uint16_t>(pciCapCommon, pciQueueEnable) || pciRead<uint16_t>(pciCapCommon, pciQueueSize) < queueSize)
-      return false;
+    if (!transport.negotiate(1U << 5) || transport.queueMaximum(0) < queueSize) return false;
   } else {
+    write32(0x70, 1);
+    write32(0x70, 3);
+    write32(0x14, 0);
+    uint32_t lowFeatures = read32(0x10);
+    write32(0x14, 1);
+    uint32_t highFeatures = read32(0x10);
+    if (!(lowFeatures & (1U << 5)) || !(highFeatures & 1)) return false;
+    write32(0x24, 0);
+    write32(0x20, 1U << 5);
+    write32(0x24, 1);
+    write32(0x20, 1);
+    write32(0x70, 11);
+    if (!(read32(0x70) & 8)) return false;
     write32(0x30, 0);
     if (read32(0x44) || read32(0x34) < queueSize) return false;
   }
@@ -264,11 +232,7 @@ bool NativeVirtioBlock::configureQueue()
   availableIndex = usedIndex = 0;
   dmaBarrier();
   if (pci) {
-    pciWrite<uint16_t>(pciCapCommon, pciQueueSize, queueSize);
-    pciWriteAddress(pciQueueDesc, queuePhysical);
-    pciWriteAddress(pciQueueDriver, queuePhysical + 128);
-    pciWriteAddress(pciQueueDevice, queuePhysical + 256);
-    pciWrite<uint16_t>(pciCapCommon, pciQueueEnable, 1);
+    if (!transport.enableQueue(0, queueSize, queuePhysical, queuePhysical + 128, queuePhysical + 256)) return false;
   } else {
     write32(0x38, queueSize);
     writeAddress(0x80, queuePhysical);
@@ -286,10 +250,10 @@ bool NativeVirtioBlock::readCapacity()
 {
   // Read 64-bit capacity through stable, aligned 32-bit configuration accesses.
   for (unsigned attempt = 0; attempt < 8; ++attempt) {
-    uint32_t generation = pci ? pciRead<uint8_t>(pciCapCommon, pciConfigGeneration) : read32(0xfc);
-    uint64_t low = pci ? pciRead<uint32_t>(pciCapDevice, 0) : read32(0x100);
-    uint64_t high = pci ? pciRead<uint32_t>(pciCapDevice, 4) : read32(0x104);
-    if (generation == (pci ? pciRead<uint8_t>(pciCapCommon, pciConfigGeneration) : read32(0xfc))) {
+    uint32_t generation = pci ? transport.generation() : read32(0xfc);
+    uint64_t low = pci ? transport.config<uint32_t>(0) : read32(0x100);
+    uint64_t high = pci ? transport.config<uint32_t>(4) : read32(0x104);
+    if (generation == (pci ? transport.generation() : read32(0xfc))) {
       capacity = low | (high << 32);
       return capacity && capacity <= UINT64_MAX / 512;
     }
@@ -297,69 +261,14 @@ bool NativeVirtioBlock::readCapacity()
   return false;
 }
 
-IOMemoryMap *NativeVirtioBlock::mapPhysical(uint64_t physical, uint64_t length, uintptr_t *address)
-{
-  uint64_t page = physical & ~static_cast<uint64_t>(4095);
-  uint64_t end = (physical + length + 4095) & ~static_cast<uint64_t>(4095);
-  if (!length || end <= page) return nullptr;
-  IOMemoryDescriptor *descriptor = IOMemoryDescriptor::withPhysicalAddress(page, end - page, kIODirectionNone);
-  if (!descriptor) return nullptr;
-  IOMemoryMap *map = descriptor->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapInhibitCache);
-  descriptor->release();
-  if (map) *address = static_cast<uintptr_t>(map->getVirtualAddress() + (physical - page));
-  return map;
-}
-
-// Bus 0 of a generic ECAM host bridge: the first virtio-blk function (0x1af4:0x1042 modern, or 0x1001 transitional
-// with modern capabilities). The firmware has assigned the BARs; the driver only enables decode and bus mastering.
+// Bus 0 of a generic ECAM host bridge: the first virtio-blk function (NativeVirtioPci.h).
 bool NativeVirtioBlock::startPci(IOService *provider)
 {
   mapping = provider->mapDeviceMemoryWithIndex(0, kIOMapAnywhere | kIOMapInhibitCache);
-  if (!mapping || mapping->getLength() < 0x100000) return false;
-  const uintptr_t ecam = static_cast<uintptr_t>(mapping->getVirtualAddress());
-  auto config32 = [](uintptr_t function, unsigned offset) {
-    return *reinterpret_cast<volatile uint32_t *>(function + offset);
-  };
-  uintptr_t function = 0;
-  for (unsigned slot = 0; slot < 32 && !function; ++slot) {
-    uint32_t id = config32(ecam + (slot << 15), 0);
-    if ((id & 0xffff) == 0x1af4 && ((id >> 16) == 0x1042 || (id >> 16) == 0x1001)) function = ecam + (slot << 15);
-  }
-  if (!function || !(config32(function, 4) & (0x10U << 16))) return false;
-  uint64_t windowBase[5] = {}, windowLength[5] = {};
-  uint32_t notifyMultiplier = 0;
-  unsigned guard = 0;
-  for (unsigned cap = config32(function, 0x34) & 0xfc; cap && guard < 48; ++guard) {
-    uint32_t head = config32(function, cap);
-    unsigned type = (head >> 24) & 0xff, bar = config32(function, cap + 4) & 0xff;
-    if ((head & 0xff) == 0x09 && type >= pciCapCommon && type <= pciCapDevice && bar <= 5 && !windowLength[type]) {
-      uint32_t low = config32(function, 0x10 + 4 * bar);
-      uint64_t base = (low & 1) ? 0 : (low & ~static_cast<uint64_t>(15));
-      if (base && ((low >> 1) & 3) == 2) base |= bar < 5 ? static_cast<uint64_t>(config32(function, 0x14 + 4 * bar)) << 32 : 0;
-      uint32_t offset = config32(function, cap + 8), length = config32(function, cap + 12);
-      if (base && length) {
-        windowBase[type] = base + offset;
-        windowLength[type] = length;
-        if (type == pciCapNotify) notifyMultiplier = config32(function, cap + 16);
-      }
-    }
-    cap = (head >> 8) & 0xfc;
-  }
-  if (!windowLength[pciCapCommon] || !windowLength[pciCapNotify] || !windowLength[pciCapDevice]) return false;
-  // Memory space and bus master; the upper half (status) is write-one-to-clear, so it is written as zero.
-  *reinterpret_cast<volatile uint32_t *>(function + 4) = (config32(function, 4) & 0xffff) | 0x6;
-  __asm__ volatile("dsb oshst" ::: "memory");
-  for (unsigned type = pciCapCommon; type <= pciCapDevice; ++type) {
-    if (!windowLength[type]) continue;
-    pciMaps[type] = mapPhysical(windowBase[type], windowLength[type], &pciWindow[type]);
-    if (!pciMaps[type]) return false;
-  }
-  pci = true;
-  pciWrite<uint16_t>(pciCapCommon, pciQueueSelect, 0);
-  uint64_t notifyOffset = static_cast<uint64_t>(pciRead<uint16_t>(pciCapCommon, pciQueueNotifyOff)) * notifyMultiplier;
-  if (notifyOffset + 2 > windowLength[pciCapNotify]) return false;
-  pciNotifyAddress = pciWindow[pciCapNotify] + notifyOffset;
-  return true;
+  if (!mapping) return false;
+  pci = transport.open(static_cast<uintptr_t>(mapping->getVirtualAddress()), mapping->getLength(),
+                       virtio_pci::deviceBlock) && transport.hasDeviceConfig();
+  return pci;
 }
 
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
@@ -716,7 +625,7 @@ void NativeVirtioBlock::free()
   if (queueMemory) { queueMemory->release(); queueMemory = nullptr; }
   if (transferMemory) { transferMemory->release(); transferMemory = nullptr; }
   if (mapping) { mapping->release(); mapping = nullptr; }
-  for (auto &map : pciMaps) if (map) { map->release(); map = nullptr; }
+  transport.close();
   if (gate) { IOLockFree(gate); gate = nullptr; }
   IOBlockStorageDevice::free();
 }

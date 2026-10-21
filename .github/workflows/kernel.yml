@@ -129,6 +129,15 @@ jobs:
           python3 scripts/audit-storage-interface-static.py ../kernel/kernel.macho
           mkdir -p "$GITHUB_WORKSPACE/collect/audit"
           cp build/storage-abi/interface-audit.json "$GITHUB_WORKSPACE/collect/audit/"
+          # Original IOHIDDevice bindings for NativeHidInput: the UniXNU builder qualifies them on a prelinked candidate.
+          if [ -f drivers/NativeHidInput/NativeHidInput.cpp ]; then
+            mkdir -p build/native-prelink
+            cp ../kernel/kernel.macho build/native-prelink/native-owner-ufs-cpu-desktop-ci-candidate.macho
+            cp ../kernel/kernel.json build/native-prelink/native-owner-ufs-cpu-desktop-ci-candidate.json
+            python3 scripts/build-native-hid-input.py
+            cp build/native-hid-input/OriginalHidDeviceABI.h build/native-hid-input/abi-audit.json "$GITHUB_WORKSPACE/collect/audit/"
+            cp build/native-hid-input/original-bindings.S "$GITHUB_WORKSPACE/collect/audit/hid-original-bindings.S"
+          fi
 
       - name: Upload storage audit
         if: always()

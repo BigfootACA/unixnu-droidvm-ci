@@ -25,12 +25,18 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 
 [kernel]
 defconfig = "droidvm_defconfig"
-# Stage 1: the platform expert, the CPU/GIC/timer driver and the source corecrypto; console on the PL011.
+# The platform expert, the CPU/GIC/timer driver, NativeAES and NativeVirtioBlock bound to the original families.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
   "build-arm-driver.py ArmVirtPlatform",
   "build-arm-driver.py ArmCpu",
+  "build-arm-driver.py NativeAES",
+  "build-native-aes-bindings.py",
+  "prepare-storage-abi.py",
+  "build-arm-driver.py NativeVirtioBlock",
+  "build-native-virtio-bindings.py --component NativeVirtioBlock",
+  "build-virtio-input.py",
   "build-virt-stubs.py",
   "build-libpthread-kernel.py",
 ]
@@ -54,4 +60,6 @@ roots = [
   "com.apple.kext.CoreTrust",
   "com.apple.security.AppleImage4",
   "com.apple.security.sandbox",
+  "com.apple.iokit.IOHIDFamily",
+  "com.apple.iokit.IOHIDEventDriver",
 ]

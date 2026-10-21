@@ -1,5 +1,7 @@
 # Kernel configuration of the virtual machine board. CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build.
-# Stage 1: reach the platform expert and print the console on the PL011 (patches/xnu/virt-pl011-uart.patch).
+# Console on the PL011 (patches/xnu/virt-pl011-uart.patch). The kernel is prelinked against the original kernelcache:
+# the original corecrypto, AES and storage families start through OSKext, and NativeVirtioBlock (drivers/, virtio-mmio
+# and virtio-pci) binds to the original IOBlockStorageDevice (scripts/data/storage-interface-audit.json).
 
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
 # libpthread linked from source: the unprelinked kernel has no com.apple.kec.pthread.
@@ -13,6 +15,9 @@ CONFIG_XNU_NATIVE_PAN=n
 CONFIG_XNU_BOOT_PROGRESS=n
 # The BCM2837 panic log at PA 0x3c0fc000 is PCIe MMIO on QEMU virt and unmapped on crosvm: take it from the ADT.
 CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
 
-CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/virt-stubs/libVirtStubs.a"
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+# NativeVirtioInput and its HID devices (scripts/build-virtio-input.py); nothing references them, so force_load.
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/virt-stubs/libVirtStubs.a -Wl,-force_load,{tree}/build/virtio-input/libVirtioInput.a"
