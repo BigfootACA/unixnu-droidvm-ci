@@ -1,0 +1,205 @@
+name: mainline
+
+# Builds the kernel of the DroidVM mainline: Droid-VM/UniXNU-droidvm (device) with Droid-VM/UniXNU (wip/droidvm), plus the
+# diagnostic XNU patches of overlay/droidvm/patches/xnu. The kernel links Apple kexts from the IPSW kernelcache, so binaries
+# are uploaded encrypted with the ARTIFACT_KEY secret; only logs are plain.
+#
+# The device's original-class audits read build/reference-candidate/kernel.{macho,json}, a prelinked kernel of the board
+# without its native storage/display drivers. It is kept encrypted as the release asset reference-candidate/
+# reference-kernel.tgz.enc; when missing (or with rebuild_reference) it is linked first from a reduced copy of the device
+# repository (scripts/make-reference-device.py) in the same tree.
+
+on:
+  workflow_dispatch:
+    inputs:
+      unixnu_repo:
+        default: Droid-VM/UniXNU
+      unixnu_ref:
+        default: wip/droidvm
+      device_repo:
+        default: Droid-VM/UniXNU-droidvm
+      device_ref:
+        default: wip/hackintosh
+      rebuild_reference:
+        type: boolean
+        default: false
+  push:
+    paths:
+      - 'overlay/droidvm/**'
+      - '.github/workflows/mainline.yml'
+      - 'scripts/make-reference-device.py'
+      - 'scripts/owner-policy-dirs.py'
+
+permissions:
+  contents: write
+
+jobs:
+  kernel:
+    runs-on: macos-26
+    timeout-minutes: 340
+    env:
+      BOARD: droidvm
+      LABEL: mainline
+      UNIXNU_REPO: ${{ inputs.unixnu_repo || 'Droid-VM/UniXNU' }}
+      UNIXNU_REF: ${{ inputs.unixnu_ref || 'wip/droidvm' }}
+      DEVICE_REPO: ${{ inputs.device_repo || 'Droid-VM/UniXNU-droidvm' }}
+      DEVICE_REF: ${{ inputs.device_ref || 'wip/hackintosh' }}
+      REBUILD_REFERENCE: ${{ inputs.rebuild_reference || false }}
+      GH_TOKEN: ${{ github.token }}
+      ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          brew install llvm lld cmake ninja unifdef mtools dtc
+          python3 -m pip install --upgrade pip
+
+      - name: Sources
+        run: |
+          git clone --filter=blob:none "https://github.com/$UNIXNU_REPO.git" UniXNU
+          git -C UniXNU checkout "$UNIXNU_REF"
+          git -C UniXNU submodule update --init --recursive --filter=blob:none
+          git clone --filter=blob:none "https://github.com/$DEVICE_REPO.git" device
+          git -C device checkout "$DEVICE_REF"
+          git -C device submodule update --init --recursive --filter=blob:none
+          # A device patches/xnu replaces the UniXNU one as a module: carry the UniXNU patches beside the overlay.
+          mkdir -p device/patches/xnu
+          cp ci/overlay/$BOARD/patches/xnu/*.patch device/patches/xnu/
+          cp -n UniXNU/patches/xnu/*.patch device/patches/xnu/
+          ls device/patches/xnu
+          echo "UNIXNU_COMMIT=$(git -C UniXNU rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "DEVICE_COMMIT=$(git -C device rev-parse HEAD)" >> "$GITHUB_ENV"
+          git -C UniXNU log --oneline -1
+          git -C device log --oneline -1
+          # The reference device: the same repository without the builders that need the reference candidate.
+          cp -R device device-ref
+          python3 ci/scripts/make-reference-device.py device-ref "${BOARD}_defconfig"
+          mkdir -p device/.cache
+          rm -rf device-ref/.cache
+          ln -s "$PWD/device/.cache" device-ref/.cache
+
+      - name: Cache fetched sources
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/feeds
+          key: feeds-mainline-${{ hashFiles('UniXNU/feeds.toml', 'device/feeds.toml') }}
+
+      - name: Fetch
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig "${BOARD}_defconfig" -D ../device
+          ./unixnu fetch
+          ./unixnu ipsw fetch
+          ./unixnu status || true
+
+      - name: Prefetch API listings
+        run: |
+          sources="UniXNU/out/$BOARD/tree/.cache/sources"
+          mkdir -p "$sources"
+          api=repos/apple-oss-distributions/xnu/contents
+          gh api "$api/iokit/DriverKit?ref=xnu-10063.121.3" > "$sources/xnu-driverkit-10063.121.3.json"
+          gh api "$api/iokit/DriverKit/crypto?ref=xnu-10063.121.3" > "$sources/xnu-driverkit-crypto-10063.121.3.json"
+          gh api "$api/EXTERNAL_HEADERS/TrustCache?ref=xnu-8796.101.5" > "$sources/xnu-trustcache-8796.101.5.json"
+
+      - name: Owner root policies
+        # build/verified-root-{os,systemos} from the owner manifests published encrypted as root-policies/verified-root-inputs.tar.enc.
+        run: |
+          gh release download root-policies --repo "$GITHUB_REPOSITORY" --pattern verified-root-inputs.tar.enc --dir "$RUNNER_TEMP"
+          inputs="$RUNNER_TEMP/verified-root-inputs"
+          mkdir -p "$inputs"
+          openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ARTIFACT_KEY -in "$RUNNER_TEMP/verified-root-inputs.tar.enc" | tar -xz -C "$inputs"
+          python3 ci/scripts/owner-policy-dirs.py "$inputs" "UniXNU/out/$BOARD/tree"
+
+      - name: Reference candidate
+        working-directory: UniXNU
+        run: |
+          jobs="-j $(sysctl -n hw.ncpu)"
+          ref="out/$BOARD/tree/build/reference-candidate"
+          mkdir -p "$ref"
+          if [ "$REBUILD_REFERENCE" != true ] && gh release download reference-candidate --repo "$GITHUB_REPOSITORY" \
+               --pattern reference-kernel.tgz.enc --dir "$RUNNER_TEMP" 2>/dev/null; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ARTIFACT_KEY -in "$RUNNER_TEMP/reference-kernel.tgz.enc" | tar -xz -C "$ref"
+            echo "reference candidate from the release asset"
+          else
+            ./unixnu defconfig "${BOARD}_defconfig" -D ../device-ref
+            ./unixnu fetch   # writes device-ref/unixnu.lock; the sources are already in out/feeds
+            ./unixnu build kernel $jobs
+            cp "out/$BOARD/kernel/kernel.macho" "out/$BOARD/kernel/kernel.json" "$ref/"
+            tar -czf "$RUNNER_TEMP/reference-kernel.tgz" -C "$ref" kernel.macho kernel.json
+            openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ARTIFACT_KEY -in "$RUNNER_TEMP/reference-kernel.tgz" \
+              -out "$RUNNER_TEMP/reference-kernel.tgz.enc"
+            gh release view reference-candidate --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+              gh release create reference-candidate --repo "$GITHUB_REPOSITORY" --title "reference candidate (encrypted)" \
+                --notes "Prelinked DroidVM kernel without native storage/display drivers, AES-256 encrypted."
+            gh release upload reference-candidate "$RUNNER_TEMP/reference-kernel.tgz.enc" --repo "$GITHUB_REPOSITORY" --clobber
+            # The full build starts again from the device repository; its kernel replaces this one.
+            mkdir -p "$RUNNER_TEMP/logs-reference"
+            cp -R "out/$BOARD/logs/." "$RUNNER_TEMP/logs-reference/" || true
+            ./unixnu defconfig "${BOARD}_defconfig" -D ../device
+          fi
+          ls -la "$ref"
+
+      - name: Build kernel
+        working-directory: UniXNU
+        run: |
+          ./unixnu build kernel -j "$(sysctl -n hw.ncpu)"
+
+      - name: Collect
+        if: always()
+        run: |
+          board="UniXNU/out/$BOARD"
+          mkdir -p collect
+          [ -d "$board/logs" ] && cp -R "$board/logs" collect/logs || true
+          [ -d "$RUNNER_TEMP/logs-reference" ] && cp -R "$RUNNER_TEMP/logs-reference" collect/logs-reference || true
+          printf 'unixnu %s %s\ndevice %s %s\n' "$UNIXNU_REPO" "$UNIXNU_COMMIT" "$DEVICE_REPO" "$DEVICE_COMMIT" > collect/sources.txt
+          cp collect/sources.txt collect/logs/ 2>/dev/null || true
+          if [ -d "$board/tree/build" ]; then
+            (cd "$board/tree" && find build -maxdepth 4 \( -name '*.a' -o -name 'mach.*' -o -name '*.json' \) -type f -size -400M \
+               -not -path 'build/reference-candidate/*' | tar -cf - -T -) > collect/build.tar || true
+          fi
+          [ -d "$board/kernel" ] && tar -czf kernel.tgz -C "$board" kernel || true
+          [ -s collect/build.tar ] && gzip -c collect/build.tar > build.tgz || true
+          for name in kernel build; do
+            [ -s $name.tgz ] && openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ARTIFACT_KEY -in $name.tgz -out $name.tgz.enc
+          done
+          ls -la collect *.tgz* || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ env.LABEL }}
+          path: |
+            collect/logs
+            collect/logs-reference
+            collect/sources.txt
+          if-no-files-found: ignore
+
+      - name: Upload kernel (encrypted)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ env.LABEL }}
+          path: kernel.tgz.enc
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload build (encrypted)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ env.LABEL }}
+          path: build.tgz.enc
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 7
