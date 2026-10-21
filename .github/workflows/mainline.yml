@@ -1,7 +1,7 @@
 name: mainline
 
 # Builds the kernel of the DroidVM mainline: Droid-VM/UniXNU-droidvm (device) with Droid-VM/UniXNU (wip/droidvm), plus the
-# diagnostic XNU patches of overlay/droidvm/patches/xnu. The kernel links Apple kexts from the IPSW kernelcache, so binaries
+# diagnostic XNU patches of overlay/droidvm/patches/xnu and the drivers of overlay/droidvm/drivers (virtio-pci). The kernel links Apple kexts from the IPSW kernelcache, so binaries
 # are uploaded encrypted with the ARTIFACT_KEY secret; only logs are plain.
 #
 # The device's original-class audits read build/reference-candidate/kernel.{macho,json}, a prelinked kernel of the board
@@ -25,7 +25,8 @@ on:
         default: false
   push:
     paths:
-      - 'overlay/droidvm/**'
+      - 'overlay/droidvm/patches/**'
+      - 'overlay/droidvm/drivers/**'
       - '.github/workflows/mainline.yml'
       - 'scripts/make-reference-device.py'
       - 'scripts/owner-policy-dirs.py'
@@ -74,6 +75,11 @@ jobs:
           # A device patches/xnu replaces the UniXNU one as a module: carry the UniXNU patches beside the overlay.
           mkdir -p device/patches/xnu
           cp ci/overlay/$BOARD/patches/xnu/*.patch device/patches/xnu/
+          # Driver modules of the overlay replace the UniXNU ones (a device repository directory wins over the base):
+          # NativeVirtioBlock with the virtio-pci transport, for the stock DroidVM crosvm (virtio-pci only).
+          mkdir -p device/drivers
+          cp -R ci/overlay/$BOARD/drivers/. device/drivers/
+          ls device/drivers
           cp -n UniXNU/patches/xnu/*.patch device/patches/xnu/
           ls device/patches/xnu
           echo "UNIXNU_COMMIT=$(git -C UniXNU rev-parse HEAD)" >> "$GITHUB_ENV"
