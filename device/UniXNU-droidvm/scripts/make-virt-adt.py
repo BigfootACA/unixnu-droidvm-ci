@@ -90,6 +90,8 @@ parser.add_argument('--vmm-present', action='store_true', help='report the hyper
 parser.add_argument('--root-match-volume-uuid', type=uuid.UUID)
 parser.add_argument('--osenvironment', choices=['ramdisk', 'recoveryos', 'main'])
 parser.add_argument('--crypto-hash-method', choices=['sha2-384', 'sha1'])
+parser.add_argument('--virtio-mmio', type=int, default=0, metavar='N',
+                    help='QEMU virt: describe the first N virtio-mmio transports (0x0a000000 + 0x200 * i) for NativeVirtioBlock')
 args = parser.parse_args()
 if not 1 <= args.smp <= 8:
     parser.error('--smp is 1..8')
@@ -97,6 +99,8 @@ if not 0x10000000 <= args.owned_memory_size <= 0x200000000 or args.owned_memory_
     parser.error('owned memory must be 256 MiB to 8 GiB, aligned to 2 MiB')
 if not 0 < args.timebase < 1 << 32:
     parser.error('timebase does not fit the u32 property')
+if args.virtio_mmio and (args.machine != 'qemu' or not 0 < args.virtio_mmio <= 32):
+    parser.error('--virtio-mmio is 1..32 transports of QEMU virt')
 
 layout = machine_layout(args.machine, args.smp)
 dram_base = args.dram_base if args.dram_base is not None else layout['dram_base']
@@ -135,12 +139,19 @@ chosen = node('chosen', [
     *(empty_nvram_proxy() if args.nvram_proxy else []),
 ], [node('memory-map'), node('manifest-properties')])
 
-arm_io = node('arm-io', [('device_type', string('virt-io')), ('ranges', u64(0, io_base, layout['io_size']))], [
+cells = [('#address-cells', u32(2)), ('#size-cells', u32(2))]  # IOKit parses every reg as 64-bit pairs
+arm_io = node('arm-io', [('device_type', string('virt-io')), *cells, ('ranges', u64(0, io_base, layout['io_size']))], [
     node('intc', [('compatible', string('arm,gic-v3')), ('reg', u64(*io_reg(layout['gicd']), *io_reg(layout['gicr'])))]),
     node('uart0', [('compatible', string('arm,pl011')), ('reg', u64(*io_reg(layout['uart'])))]),
+    # hw/arm/virt.c VIRT_MMIO: 32 transports of 0x200 bytes; QEMU creates them from the top index down, so
+    # -device virtio-blk-device lands in the highest free slot. NativeVirtioBlock polls and needs dma-coherent.
+    *[node('virtio-mmio-%d' % index, [('compatible', string('virtio,mmio')),
+                                      ('reg', u64(*io_reg((0x0a000000 + 0x200 * index, 0x200)))),
+                                      ('dma-coherent', b'')])
+      for index in range(32 - args.virtio_mmio, 32)],
 ])
 
-tree = node('device-tree', [('model', string('unixnu-' + args.machine)), ('compatible', string('linux,dummy-virt'))], [
+tree = node('device-tree', [('model', string('unixnu-' + args.machine)), *cells, ('compatible', string('linux,dummy-virt'))], [
     chosen,
     node('cpus', children=[cpu(index) for index in range(args.smp)]),
     node('psci', [('compatible', string('arm,psci-1.0')), ('method', string('hvc'))]),

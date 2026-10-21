@@ -120,6 +120,24 @@ jobs:
           fi
           ./unixnu build kernel $jobs $UNIXNU_LOCAL
 
+      - name: Storage audit
+        # Qualifies the original IOBlockStorageDevice dispatch against the prelinked candidate; the JSON holds only
+        # addresses and symbol names, and is recorded in the device repository for the NativeVirtioBlock bindings.
+        if: always() && hashFiles(format('UniXNU/out/{0}/kernel/kernel.macho', env.DEVICE)) != '' && hashFiles(format('UniXNU/out/{0}/tree/scripts/audit-storage-interface-static.py', env.DEVICE)) != ''
+        working-directory: UniXNU/out/${{ env.DEVICE }}/tree
+        run: |
+          python3 scripts/audit-storage-interface-static.py ../kernel/kernel.macho
+          mkdir -p "$GITHUB_WORKSPACE/collect/audit"
+          cp build/storage-abi/interface-audit.json "$GITHUB_WORKSPACE/collect/audit/"
+
+      - name: Upload storage audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-audit-${{ env.DEVICE }}
+          path: collect/audit
+          if-no-files-found: ignore
+
       - name: Collect
         if: always()
         run: |
