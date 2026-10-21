@@ -226,7 +226,15 @@ void frame()
       bool known = false;
       for (unsigned i = 0; i < n && !known; ++i) known = next[i].device == k && next[i].slot == s;
       if (!known) {
-        uint8_t id = s < maxSlots ? static_cast<uint8_t>(1 + static_cast<uint32_t>(d.slots[s].id) % 120) : 127;
+        // The lowest contact identifier 1..10 not held by another finger. Larger identifiers (the mainline driver's
+        // 127 for a pointer) reach backboardd but move nothing; a lifted finger was already reported up (NativeHidInput
+        // sends tip-up for a vanished identifier), so its identifier can be reused.
+        uint8_t id = 1;
+        for (bool taken = true; taken && id <= fingers;) {
+          taken = false;
+          for (unsigned i = 0; i < n && !taken; ++i) taken = next[i].id == id;
+          if (taken) ++id;
+        }
         next[n++] = {static_cast<uint8_t>(k), static_cast<uint8_t>(s), id, true, 0, 0};
       }
     }
