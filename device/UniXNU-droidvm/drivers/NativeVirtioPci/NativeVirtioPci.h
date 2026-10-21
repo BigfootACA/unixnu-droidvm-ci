@@ -70,6 +70,15 @@ inline bool matches(uint32_t id, unsigned device)
   return pciDevice == 0x1040 + device || (device == deviceBlock && pciDevice == 0x1001);
 }
 
+// Number of functions of the given virtio device type on bus 0 of the mapped ECAM window.
+inline unsigned count(uintptr_t ecam, uint64_t ecamLength, unsigned device)
+{
+  unsigned found = 0;
+  if (ecamLength < 0x100000) return 0;
+  for (unsigned slot = 0; slot < 32; ++slot) found += matches(mmioRead<uint32_t>(ecam + (slot << 15)), device);
+  return found;
+}
+
 class Transport {
   IOMemoryMap *maps[5] = {};
   uintptr_t window[5] = {};

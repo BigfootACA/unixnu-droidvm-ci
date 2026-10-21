@@ -6,6 +6,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/storage/IOBlockStorageDevice.h>
 #include <libkern/c++/OSData.h>
+#include <libkern/c++/OSNumber.h>
 #include <libkern/crypto/sha2.h>
 #include <kern/clock.h>
 #include <kern/task.h>
@@ -130,6 +131,8 @@ class NativeVirtioBlock : public IOBlockStorageDevice {
   }
   bool readCapacity();
   bool startPci(IOService *provider);
+  unsigned pciIndex() const;
+  void startSiblings(IOService *provider);
   bool reset();
   bool configureQueue();
   IOReturn readSectors(uint64_t sector, uint32_t bytes);
@@ -257,16 +260,46 @@ bool NativeVirtioBlock::readCapacity()
   return false;
 }
 
-// Bus 0 of a generic ECAM host bridge: the first virtio-blk function (NativeVirtioPci.h).
+// Which virtio-blk function of the bus this instance drives: the matched instance takes the first and starts one
+// sibling per further function (startSiblings), each with its index in this property.
+static const char *const pciIndexKey = "NativeVirtioPciIndex";
+
+unsigned NativeVirtioBlock::pciIndex() const
+{
+  OSNumber *index = OSDynamicCast(OSNumber, getProperty(pciIndexKey));
+  return index ? index->unsigned32BitValue() : 0;
+}
+
+// Bus 0 of a generic ECAM host bridge: the pciIndex()-th virtio-blk function (NativeVirtioPci.h).
 bool NativeVirtioBlock::startPci(IOService *provider)
 {
   mapping = provider->mapDeviceMemoryWithIndex(0, kIOMapAnywhere | kIOMapInhibitCache);
   if (!mapping) return false;
   pci = transport.open(static_cast<uintptr_t>(mapping->getVirtualAddress()), mapping->getLength(),
-                       virtio_pci::deviceBlock) && transport.hasDeviceConfig();
+                       virtio_pci::deviceBlock, pciIndex()) && transport.hasDeviceConfig();
   if (pci) IOLog("NativeVirtioBlock: virtio-pci function %u, common config at %#llx\n", transport.pciSlot(), transport.commonPhysical());
-  else IOLog("NativeVirtioBlock: no usable virtio-blk function on the ECAM bus\n");
+  else IOLog("NativeVirtioBlock: no usable virtio-blk function %u on the ECAM bus\n", pciIndex());
   return pci;
+}
+
+void NativeVirtioBlock::startSiblings(IOService *provider)
+{
+  if (pciIndex() != 0 || !mapping) return;
+  unsigned total = virtio_pci::count(static_cast<uintptr_t>(mapping->getVirtualAddress()), mapping->getLength(),
+                                     virtio_pci::deviceBlock);
+  for (unsigned index = 1; index < total && index < 8; ++index) {
+    NativeVirtioBlock *sibling = new NativeVirtioBlock;
+    OSNumber *number = OSNumber::withNumber(index, 32);
+    bool started = sibling && number && sibling->init() && sibling->setProperty(pciIndexKey, number) &&
+                   sibling->attach(provider);
+    if (started && !sibling->start(provider)) {
+      sibling->detach(provider);
+      started = false;
+    }
+    if (!started) IOLog("NativeVirtioBlock: virtio-blk function %u did not start\n", index);
+    OSSafeReleaseNULL(number);
+    OSSafeReleaseNULL(sibling);   // an attached, started sibling is retained by its provider
+  }
 }
 
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
@@ -585,6 +618,7 @@ bool NativeVirtioBlock::start(IOService *provider)
         capacity, native_virtio_first_sector_sha256[0], native_virtio_first_sector_sha256[1],
         native_virtio_first_sector_sha256[2], native_virtio_first_sector_sha256[3]);
   registerService();
+  if (pci) startSiblings(provider);
   return true;
 }
 
