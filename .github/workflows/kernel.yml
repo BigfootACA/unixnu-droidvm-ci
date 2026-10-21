@@ -27,10 +27,8 @@ on:
       runner:
         description: macOS runner image
         default: macos-26
-  push:
-    paths:
-      - 'device/**'
-      - 'local/**'
+  # Manual only: the DroidVM mainline (Droid-VM/UniXNU-droidvm) is built by mainline.yml; device/UniXNU-droidvm here is the
+  # earlier virtio-pci port, kept for reference.
 
 jobs:
   kernel:

@@ -29,14 +29,29 @@ if ! grep -q '^apfs ' /proc/modules; then
 fi
 LOOP=$(sudo losetup --find --show "$IMAGE")
 MNT=$(mktemp -d)
+OSM=$(mktemp -d)
 cleanup() {
   mountpoint -q "$MNT" && sudo umount "$MNT"
-  rmdir -- "$MNT" 2>/dev/null || true
+  mountpoint -q "$OSM" && sudo umount "$OSM"
+  rmdir -- "$MNT" "$OSM" 2>/dev/null || true
   [ -n "${LOOP:-}" ] && sudo losetup -d "$LOOP" 2>/dev/null || true
+  [ -n "${OS_LOOP:-}" ] && sudo losetup -d "$OS_LOOP" 2>/dev/null || true
   [ "$LOADED" = 1 ] && sudo rmmod apfs 2>/dev/null || true
 }
 trap cleanup EXIT
 sudo mount -t apfs -o readwrite "$LOOP" "$MNT"
+
+# OS_IMAGE (the expanded OS disk, its APFS container at OS_OFFSET bytes, default the GPT partition at sector 34): start from
+# the OS volume's own initial /private/var, as UniXNU scripts/prepare-owner-data-fixture.py does, with its owners and modes
+# (daemons running as their own users need their db/, mobile/ ... directories). staged_system_apps is left out.
+if [ -n "${OS_IMAGE:-}" ]; then
+  OS_LOOP=$(sudo losetup --find --show --read-only --offset "${OS_OFFSET:-17408}" "$OS_IMAGE")
+  sudo mount -t apfs -o ro "$OS_LOOP" "$OSM"
+  sudo rsync -aH --exclude=/staged_system_apps "$OSM/private/var/" "$MNT/"
+  sudo umount "$OSM"
+  sudo losetup -d "$OS_LOOP"
+  OS_LOOP=
+fi
 
 # /private/var skeleton: the common iOS Data directories (UniXNU scripts/prepare-offline-data.py) plus the usual
 # top-level system ones. root:wheel 0755 unless listed in MOBILE (mobile 501:501) or WORLD (1777).
@@ -59,6 +74,14 @@ done
 for directory in containers/Bundle containers/Temp; do
   sudo mkdir -p "$MNT/$directory"
 done
+# PerfPowerService (PowerlogCore PLKQueue) watches PLD_ManagedPreferencePath, /Library/Managed Preferences/mobile, and aborts
+# when it cannot open it; MDM profiles normally create it.
+sudo mkdir -p "$MNT/Managed Preferences/mobile"
+# mobileactivationd compares MobileGestalt BuildVersion/ProductVersion with its data ark and otherwise migrates the data of an
+# older release; on an empty Data volume that migration fails and it os_crash()es ("Migration failed."), which blocks lsd and
+# SpringBoard on its throttled XPC service. The ark of a device already on this build: no migration due.
+DATA_ARK=${DATA_ARK:-0}
+
 # Setup marked as done, as UniXNU scripts/seed-data-skip-setup.py does (docs/guide/skip-setup.md), so the first boot goes
 # to SpringBoard instead of the Setup app. SKIP_SETUP=0 keeps Setup.
 if [ "${SKIP_SETUP:-1}" = 1 ]; then
@@ -89,7 +112,21 @@ PY
   done
   rmdir -- "$PREFS"
 fi
+if [ "$DATA_ARK" = 1 ]; then
+  ARK=$(mktemp -d)
+  python3 - "$ARK/data_ark.plist" <<'PY'
+import plistlib, sys
+ark = {'-BuildVersion': '21H461', '-ProductVersion': '17.7.11',
+       '-PreSydroDataMigrationCompleted': True, '-DataMigrationCompleted': True}
+open(sys.argv[1], 'wb').write(plistlib.dumps(ark, fmt=plistlib.FMT_BINARY))
+PY
+  sudo mkdir -p "$MNT/mobile/Library/mad"
+  sudo install -m 0600 -o 0 -g 0 "$ARK/data_ark.plist" "$MNT/mobile/Library/mad/data_ark.plist"
+  rm -f -- "$ARK/data_ark.plist"
+  rmdir -- "$ARK"
+fi
 sudo chown -R 501:501 "$MNT/mobile"
+sudo chown 0:0 "$MNT/mobile/Library/mad/data_ark.plist" 2>/dev/null || true
 sudo chmod 1777 "$MNT/tmp" "$MNT/mobile/tmp"
 sudo find "$MNT" -maxdepth 2 | sort | head -80
 sync
