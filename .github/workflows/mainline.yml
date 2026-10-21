@@ -27,6 +27,8 @@ on:
     paths:
       - 'overlay/droidvm/patches/**'
       - 'overlay/droidvm/drivers/**'
+      - 'overlay/droidvm/scripts/**'
+      - 'scripts/apply-overlay-board.py'
       - '.github/workflows/mainline.yml'
       - 'scripts/make-reference-device.py'
       - 'scripts/owner-policy-dirs.py'
@@ -81,6 +83,8 @@ jobs:
           mkdir -p device/drivers
           cp -R ci/overlay/$BOARD/drivers/. device/drivers/
           ls device/drivers
+          # Archive builders of the overlay (virtio-gpu); apply-overlay-board.py lists them after device-ref is copied.
+          cp -R ci/overlay/$BOARD/scripts/. device/scripts/
           cp -n UniXNU/patches/xnu/*.patch device/patches/xnu/
           ls device/patches/xnu
           echo "UNIXNU_COMMIT=$(git -C UniXNU rev-parse HEAD)" >> "$GITHUB_ENV"
@@ -90,6 +94,7 @@ jobs:
           # The reference device: the same repository without the builders that need the reference candidate.
           cp -R device device-ref
           python3 ci/scripts/make-reference-device.py device-ref "${BOARD}_defconfig"
+          python3 ci/scripts/apply-overlay-board.py device "${BOARD}_defconfig"
           mkdir -p device/.cache
           rm -rf device-ref/.cache
           ln -s "$PWD/device/.cache" device-ref/.cache

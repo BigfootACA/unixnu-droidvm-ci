@@ -49,7 +49,7 @@ template <typename T> inline void mmioWrite(uintptr_t address, T value)
 
 constexpr uint16_t vendorId = 0x1af4;
 // virtio device IDs (VirtIO 1.2 5)
-enum : unsigned { deviceBlock = 2, deviceInput = 18 };
+enum : unsigned { deviceBlock = 2, deviceGpu = 16, deviceInput = 18 };
 // virtio_pci_common_cfg
 enum : unsigned {
   deviceFeatureSelect = 0x00, deviceFeature = 0x04, driverFeatureSelect = 0x08, driverFeature = 0x0c,
