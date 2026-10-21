@@ -362,6 +362,7 @@ void inputThread(void *, wait_result_t)
   OSSafeReleaseNULL(bridge);
   if (!ecam) {
     native_virtio_input_stats[6] = 1;
+    IOLog("NativeVirtioInput: no ECAM bridge (/arm-io/pcie)\n");
   } else {
     bool keyboard = false, touch = false;
     for (unsigned index = 0; index < maxDevices && deviceCount < maxDevices; ++index) {
@@ -385,8 +386,14 @@ void inputThread(void *, wait_result_t)
       else native_virtio_input_stats[2] = native_virtio_input_stats[2] + 1;
     }
     native_virtio_input_stats[0] = 3;
+    for (unsigned i = 0; i < deviceCount; ++i)
+      IOLog("NativeVirtioInput: function %u: %s, range %u x %u\n", devices[i].transport.pciSlot(),
+            devices[i].kind == Kind::keyboard ? "keyboard" : devices[i].kind == Kind::touch ? "multi-touch" : "tablet",
+            devices[i].xMax, devices[i].yMax);
     if (deviceCount) startHid(keyboard, touch);
     native_virtio_input_stats[0] = 4;
+    IOLog("NativeVirtioInput: %u device(s), %u HID device(s) started, failure %u\n", deviceCount,
+          native_virtio_input_stats[5], native_virtio_input_stats[6]);
   }
   // Poll every 4 ms; the queues suppress notifications. The thread lives for the boot.
   for (;;) {

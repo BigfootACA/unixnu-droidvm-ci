@@ -264,6 +264,8 @@ bool NativeVirtioBlock::startPci(IOService *provider)
   if (!mapping) return false;
   pci = transport.open(static_cast<uintptr_t>(mapping->getVirtualAddress()), mapping->getLength(),
                        virtio_pci::deviceBlock) && transport.hasDeviceConfig();
+  if (pci) IOLog("NativeVirtioBlock: virtio-pci function %u, common config at %#llx\n", transport.pciSlot(), transport.commonPhysical());
+  else IOLog("NativeVirtioBlock: no usable virtio-blk function on the ECAM bus\n");
   return pci;
 }
 
@@ -556,11 +558,18 @@ bool NativeVirtioBlock::start(IOService *provider)
   }
   ownsDevice = true;
   gate = IOLockAlloc();
-  if (!gate || !configureQueue()) return false;
+  if (!gate || !configureQueue()) {
+    IOLog("NativeVirtioBlock: queue setup failed (status %#x; a read-only device and VIRTIO_F_VERSION_1 are required)\n",
+          transportMapped() ? deviceStatus() : 0);
+    return false;
+  }
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
   if (!configureVerification()) return false;
 #endif
-  if (readSectors(0, 512)) return false;
+  if (IOReturn status = readSectors(0, 512)) {
+    IOLog("NativeVirtioBlock: reading sector 0 failed: %#x\n", status);
+    return false;
+  }
   SHA256_CTX hash;
   SHA256_Init(&hash);
   SHA256_Update(&hash, readBuffer(), 512);
@@ -572,6 +581,9 @@ bool NativeVirtioBlock::start(IOService *provider)
   __atomic_fetch_add(&native_virtio_verified_devices, 1, __ATOMIC_RELAXED);
 #endif
   native_virtio_read_checkpoint(this);
+  IOLog("NativeVirtioBlock: %s, %llu sectors, sector 0 read (%02x%02x%02x%02x...)\n", pci ? "virtio-pci" : "virtio-mmio",
+        capacity, native_virtio_first_sector_sha256[0], native_virtio_first_sector_sha256[1],
+        native_virtio_first_sector_sha256[2], native_virtio_first_sector_sha256[3]);
   registerService();
   return true;
 }
