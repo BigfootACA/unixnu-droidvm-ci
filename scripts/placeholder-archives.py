@@ -43,4 +43,18 @@ if config.is_file():
             archive.parent.mkdir(parents=True, exist_ok=True)
             archive.write_bytes(b'!<arch>\n')
             created.append(str(archive.relative_to(tree)) if archive.is_relative_to(tree) else str(archive))
+# With both storage transports the baseline compares the bindings.json records of the two archives (and their objects)
+# before make: give each placeholder storage archive an empty object and a matching empty record.
+import hashlib, json
+for path in created:
+    archive = (tree / path) if not Path(path).is_absolute() else Path(path)
+    if archive.suffix != '.a' or not archive.parent.name.startswith(('native-virtio-block', 'native-ram-block')):
+        continue
+    obj = archive.with_name(archive.stem.removeprefix('lib') + '.o')
+    if not obj.exists():
+        obj.write_bytes(b'')
+    record = archive.with_name('bindings.json')
+    if not record.exists():
+        record.write_text(json.dumps(dict(compiled_object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
+                                          bindings={})) + '\n')
 print('placeholders:', *created, sep='\n  ')

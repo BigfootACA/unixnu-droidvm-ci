@@ -6,7 +6,8 @@
 # highmem=off keeps the PCIe ECAM (0x3f000000) and the BARs below 4 GiB, where the ADT describes them.
 # Environment: CPUS (1), MEM_MIB (2048), TIMEOUT (seconds, 120), ACCEL (kvm), CPU (host), FIRMWARE (AAVMF code image),
 # SCREENSHOT (PPM path) with SCREENSHOT_AT (seconds after start, comma separated: one file per time, suffixed);
-# each screenshot also saves the vCPU registers (monitor info registers -a) beside it as .regs.
+# each screenshot also saves the vCPU registers (monitor info registers -a) beside it as .regs;
+# PANIC_STOP (1): stop QEMU shortly after an XNU panic instead of waiting for TIMEOUT.
 # The serial console goes to LOG (default ESP_DIR/../serial.log) and to stdout.
 set -euo pipefail
 ESP=$(realpath "$1")
@@ -62,6 +63,20 @@ for index, at in enumerate(times):
     except OSError as error:
         print('screenshot failed:', error, file=sys.stderr)
 PY
+fi
+# A panicked XNU spins forever: stop QEMU a few seconds after the panic banner (PANIC_STOP=0 keeps it running).
+if [ "${PANIC_STOP:-1}" = 1 ]; then
+  (
+    while sleep 2; do
+      pid=$(pgrep -n -f "logfile=$LOG" || true)
+      if grep -aq 'Please go to https://panic.apple.com' "$LOG" 2>/dev/null; then
+        sleep 5
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null
+        break
+      fi
+      [ -z "$pid" ] && [ -s "$LOG" ] && break
+    done
+  ) &
 fi
 set +e
 timeout --foreground "$TIMEOUT" qemu-system-aarch64 \

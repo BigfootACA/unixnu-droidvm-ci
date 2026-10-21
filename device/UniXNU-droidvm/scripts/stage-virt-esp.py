@@ -24,6 +24,8 @@ parser.add_argument('--darwinboot', type=Path, required=True, help='DarwinBoot.e
 parser.add_argument('--kernel', type=Path, required=True, help='kernel Mach-O')
 parser.add_argument('--trust-cache', type=Path,
                     help='trust bundle (make-trust-bundle.py), staged as kernel.macho.trustcache; pass --trust-cache to the ADT too')
+parser.add_argument('--initrd', type=Path,
+                    help='Data seed (ci/scripts/make-data-seed.sh scratch-data.img) as the entry initrd; pass --data-ramdisk to the ADT')
 parser.add_argument('--args', default='-v serial=3 debug=0x14e kt_fixed_zones=120', help='kernel command line')
 parser.add_argument('--title', default='UniXNU virt')
 parser.add_argument('--timeout', type=int, default=1, help='menu timeout in seconds')
@@ -45,6 +47,9 @@ shutil.copyfile(args.darwinboot, payloads / 'DarwinBoot.efi')
 shutil.copyfile(args.kernel, payloads / 'kernel.macho')
 if args.trust_cache:
     shutil.copyfile(args.trust_cache, payloads / 'kernel.macho.trustcache')
+if args.initrd:
+    shutil.copyfile(args.initrd, payloads / 'scratch-data.img')
+initrd = 'initrd = "Payloads/scratch-data.img"\n' if args.initrd else ''
 subprocess.run([sys.executable, HERE / 'make-virt-adt.py', '--output', payloads / 'kernel.macho.adt', *adt_args], check=True)
 (esp / 'EFI/UniXNU/unixnu.toml').write_text(f'''version = 1
 [boot]
@@ -59,6 +64,6 @@ id = "xnu"
 title = "{args.title}"
 type = "xnu"
 path = "Payloads/kernel.macho"
-args = "{args.args}"
+{initrd}args = "{args.args}"
 ''')
 print(f'ESP staged in {esp}')

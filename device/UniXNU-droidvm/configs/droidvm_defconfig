@@ -32,12 +32,17 @@ CONFIG_XNU_OWNER_CACHE_STARTUP=y
 # Let dyld map the shared cache from the authenticated SystemOS volume (neither the root nor a preboot volume here).
 CONFIG_XNU_OWNER_CACHE_CARRIER=y
 CONFIG_XNU_OWNER_BOOT_MANIFEST=y
+# Data: a volatile RAM disk (NativeRamBlock) seeded by DarwinBoot from the entry initrd (ci/scripts/make-data-seed.sh),
+# mounted read-write at /private/var by the owner Data mount.
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+CONFIG_XNU_OWNER_DATA_MOUNT=y
 # The boot framebuffer as the original IOMobileFramebufferLegacy, copied by the CPU (drivers/NativeMobileDisplay,
 # scripts/build-virt-display.py); the flag also enables the bsd_init and late IOKit hooks that start it.
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="8748FE31-7E7F-4BFA-A7E2-7A4F5E14D0F6"
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE="{tree}/build/native-virtio-block-verified-bundle/libNativeVirtioBlock.a"
 CONFIG_XNU_VERIFIED_ROOT_ARCHIVE="{tree}/build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a"
 # NativeVirtioInput and its HID devices (scripts/build-virtio-input.py); nothing references them, so force_load.
-CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/virtio-input/libVirtioInput.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/virtio-input/libVirtioInput.a -Wl,-force_load,{tree}/build/virt-stubs/libVirtStubs.a"
