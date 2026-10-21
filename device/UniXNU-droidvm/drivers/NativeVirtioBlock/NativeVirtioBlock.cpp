@@ -106,13 +106,9 @@ class NativeVirtioBlock : public IOBlockStorageDevice {
   }
   bool online = false;
   bool ownsDevice = false;
-  uint32_t read32(unsigned offset) const {
-    return *reinterpret_cast<volatile uint32_t *>(registers + offset);
-  }
-  void write32(unsigned offset, uint32_t value) {
-    *reinterpret_cast<volatile uint32_t *>(registers + offset) = value;
-    __asm__ volatile("dsb oshst" ::: "memory");
-  }
+  // Plain ldr/str only (NativeVirtioPci.h): KVM and Gunyah cannot emulate writeback forms on MMIO.
+  uint32_t read32(unsigned offset) const { return virtio_pci::mmioRead<uint32_t>(registers + offset); }
+  void write32(unsigned offset, uint32_t value) { virtio_pci::mmioWrite<uint32_t>(registers + offset, value); }
   void writeAddress(unsigned offset, uint64_t value) {
     write32(offset, static_cast<uint32_t>(value));
     write32(offset + 4, static_cast<uint32_t>(value >> 32));

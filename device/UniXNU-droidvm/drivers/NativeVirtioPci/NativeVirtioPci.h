@@ -11,6 +11,42 @@
 
 namespace virtio_pci {
 
+// MMIO and ECAM accesses go through these: plain ldr/str with a base register only. Compilers otherwise pick pre/post-index
+// writeback forms, whose aborts carry no instruction syndrome (ISV=0); KVM and Gunyah cannot emulate those and the guest
+// takes an external abort.
+template <typename T> inline T mmioRead(uintptr_t address)
+{
+  T value;
+  if constexpr (sizeof(T) == 1) {
+    uint32_t word;
+    __asm__ volatile("ldrb %w0, [%1]" : "=r"(word) : "r"(address) : "memory");
+    value = static_cast<T>(word);
+  } else if constexpr (sizeof(T) == 2) {
+    uint32_t word;
+    __asm__ volatile("ldrh %w0, [%1]" : "=r"(word) : "r"(address) : "memory");
+    value = static_cast<T>(word);
+  } else if constexpr (sizeof(T) == 4) {
+    __asm__ volatile("ldr %w0, [%1]" : "=r"(value) : "r"(address) : "memory");
+  } else {
+    __asm__ volatile("ldr %0, [%1]" : "=r"(value) : "r"(address) : "memory");
+  }
+  return value;
+}
+
+template <typename T> inline void mmioWrite(uintptr_t address, T value)
+{
+  if constexpr (sizeof(T) == 1) {
+    __asm__ volatile("strb %w0, [%1]" : : "r"(static_cast<uint32_t>(value)), "r"(address) : "memory");
+  } else if constexpr (sizeof(T) == 2) {
+    __asm__ volatile("strh %w0, [%1]" : : "r"(static_cast<uint32_t>(value)), "r"(address) : "memory");
+  } else if constexpr (sizeof(T) == 4) {
+    __asm__ volatile("str %w0, [%1]" : : "r"(value), "r"(address) : "memory");
+  } else {
+    __asm__ volatile("str %0, [%1]" : : "r"(value), "r"(address) : "memory");
+  }
+  __asm__ volatile("dsb oshst" ::: "memory");
+}
+
 constexpr uint16_t vendorId = 0x1af4;
 // virtio device IDs (VirtIO 1.2 5)
 enum : unsigned { deviceBlock = 2, deviceInput = 18 };
@@ -44,10 +80,7 @@ class Transport {
   uintptr_t function = 0;
   unsigned slot = 0;
 
-  static uint32_t config32(uintptr_t function, unsigned offset) {
-    return *reinterpret_cast<volatile uint32_t *>(function + offset);
-  }
-  static void barrier() { __asm__ volatile("dsb oshst" ::: "memory"); }
+  static uint32_t config32(uintptr_t function, unsigned offset) { return mmioRead<uint32_t>(function + offset); }
 
   static IOMemoryMap *mapPhysical(uint64_t physical, uint64_t length, uintptr_t *address) {
     uint64_t page = physical & ~static_cast<uint64_t>(4095);
@@ -62,13 +95,8 @@ class Transport {
   }
 
 public:
-  template <typename T> T read(unsigned which, unsigned offset) const {
-    return *reinterpret_cast<volatile T *>(window[which] + offset);
-  }
-  template <typename T> void write(unsigned which, unsigned offset, T value) {
-    *reinterpret_cast<volatile T *>(window[which] + offset) = value;
-    barrier();
-  }
+  template <typename T> T read(unsigned which, unsigned offset) const { return mmioRead<T>(window[which] + offset); }
+  template <typename T> void write(unsigned which, unsigned offset, T value) { mmioWrite<T>(window[which] + offset, value); }
   bool isOpen() const { return window[capCommon] != 0; }
   unsigned pciSlot() const { return slot; }
   uint64_t commonPhysical() const { return windowPhysical[capCommon]; }
@@ -106,8 +134,7 @@ public:
     }
     if (!length[capCommon] || !length[capNotify]) return false;
     // Memory space and bus master; the upper half (status) is write-one-to-clear, so it is written as zero.
-    *reinterpret_cast<volatile uint32_t *>(function + 4) = (config32(function, 4) & 0xffff) | 0x6;
-    barrier();
+    mmioWrite<uint32_t>(function + 4, (config32(function, 4) & 0xffff) | 0x6);
     for (unsigned type = capCommon; type <= capDevice; ++type) {
       if (!length[type]) continue;
       maps[type] = mapPhysical(base[type], length[type], &window[type]);
@@ -191,8 +218,7 @@ public:
 
   void notify(uint16_t queue) {
     if (queue < maxQueues && notifyAddress[queue]) {
-      *reinterpret_cast<volatile uint16_t *>(notifyAddress[queue]) = queue;
-      barrier();
+      mmioWrite<uint16_t>(notifyAddress[queue], queue);
     }
   }
 
