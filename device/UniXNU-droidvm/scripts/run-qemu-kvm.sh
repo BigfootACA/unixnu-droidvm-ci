@@ -3,6 +3,7 @@
 #
 #   run-qemu-kvm.sh ESP_DIR [LOG] [-- extra qemu arguments]
 #
+# highmem=off keeps the PCIe ECAM (0x3f000000) and the BARs below 4 GiB, where the ADT describes them.
 # Environment: CPUS (1), MEM_MIB (2048), TIMEOUT (seconds, 120), ACCEL (kvm), CPU (host), FIRMWARE (AAVMF code image).
 # The serial console goes to LOG (default ESP_DIR/../serial.log) and to stdout.
 set -euo pipefail
@@ -32,7 +33,7 @@ else
 fi
 set +e
 timeout --foreground "$TIMEOUT" qemu-system-aarch64 \
-  -M virt,gic-version=3,virtualization=off,secure=off -accel "$ACCEL" -cpu "$CPU" \
+  -M virt,gic-version=3,virtualization=off,secure=off,highmem=off -accel "$ACCEL" -cpu "$CPU" \
   -m "$MEM_MIB" -smp "$CPUS" -display none -monitor none -nic none -no-reboot \
   -chardev stdio,id=ser0,logfile="$LOG",signal=off -serial chardev:ser0 \
   -drive if=pflash,format=raw,readonly=on,file="$CODE" \

@@ -20,12 +20,25 @@ import sys
 import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def storage_source(root):
+    """refer/IOStorageFamily, or its clone in out/feeds: the build step links only the references it fetches itself."""
+    linked = root / 'refer/IOStorageFamily'
+    if linked.is_dir():
+        return linked
+    clones = sorted((root.parents[1] / 'feeds').glob('IOStorageFamily-*'))
+    if len(clones) != 1:
+        raise SystemExit('IOStorageFamily source not fetched: run "unixnu fetch"')
+    return clones[0]
+
+
 sys.path.insert(0, str(ROOT / 'kits/NativePrelink'))
 import native_prelink as np
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument('candidate', type=Path)
 args = parser.parse_args()
-source = ROOT / 'refer/IOStorageFamily'
+source = storage_source(ROOT)
 revision = subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip()
 if revision != 'e45fbe30a7879e0b16e26dddb78538f1b00e0bff':
     raise SystemExit('Unexpected public Darwin 23 IOStorageFamily source')

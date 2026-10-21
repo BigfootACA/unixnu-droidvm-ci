@@ -3,9 +3,10 @@
 
 Two machines are described from their own published memory maps:
 
-  qemu    QEMU `virt` (KVM or TCG): RAM at 0x40000000, GICv3 at 0x08000000/0x080a0000, PL011 at 0x09000000.
+  qemu    QEMU `virt,highmem=off` (KVM or TCG): RAM at 0x40000000, GICv3 at 0x08000000/0x080a0000, PL011 at
+          0x09000000, PCIe ECAM at 0x3f000000 (highmem=off keeps ECAM and the BARs below 4 GiB).
   crosvm  DroidVM crosvm (Gunyah or KVM): RAM at 0x80000000, GICv3 distributor at 0x3fff0000 with the
-          redistributors below it, SBSA PL011 at 0x6000 (crosvm --serial hardware=sbsa).
+          redistributors below it, SBSA PL011 at 0x6000 (crosvm --serial hardware=sbsa), PCI ECAM at 0x10000.
 
 The kernel finds the console as /arm-io/uart0 (patches/xnu/virt-pl011-uart.patch). Every arm-io reg is
 relative to the arm-io range base; that base must not be zero, or pe_serial skips every UART.
@@ -63,16 +64,16 @@ def machine_layout(name, smp):
     """Physical addresses of the machine: dram base, arm-io window, GIC and UART."""
     if name == 'qemu':
         # hw/arm/virt.c: VIRT_GIC_DIST 0x08000000, VIRT_GIC_REDIST 0x080a0000 (0xf60000), VIRT_UART 0x09000000.
-        return dict(dram_base=0x40000000, io_base=0x08000000, io_size=0x04000000,
+        return dict(dram_base=0x40000000, io_base=0x08000000, io_size=0x38000000,
                     gicd=(0x08000000, 0x10000), gicr=(0x080a0000, 0xf60000), uart=(0x09000000, 0x1000),
-                    product='QEMU virt')
+                    ecam=(0x3f000000, 0x100000), product='QEMU virt')
     # crosvm aarch64/src/lib.rs: AARCH64_GIC_DIST_BASE 0x40000000 - 0x10000, redistributors of 0x20000 per vCPU
     # directly below; arch/src/serial.rs + DroidVM SBSA UART at 0x6000. The arm-io window starts at 0x1000.
     gicd_base = 0x40000000 - 0x10000
     gicr_size = 0x20000 * smp
     return dict(dram_base=0x80000000, io_base=0x1000, io_size=0x40000000 - 0x1000,
                 gicd=(gicd_base, 0x10000), gicr=(gicd_base - gicr_size, gicr_size), uart=(0x6000, 0x1000),
-                product='DroidVM crosvm')
+                ecam=(0x10000, 0x100000), product='DroidVM crosvm')
 
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -149,6 +150,9 @@ arm_io = node('arm-io', [('device_type', string('virt-io')), *cells, ('ranges', 
                                       ('reg', u64(*io_reg((0x0a000000 + 0x200 * index, 0x200)))),
                                       ('dma-coherent', b'')])
       for index in range(32 - args.virtio_mmio, 32)],
+    # Bus 0 of the generic ECAM host bridge; NativeVirtioBlock (virtio-pci) scans it for virtio-blk.
+    node('pcie', [('compatible', string('pci-host-ecam-generic')), ('reg', u64(*io_reg(layout['ecam']))),
+                  ('dma-coherent', b'')]),
 ])
 
 tree = node('device-tree', [('model', string('unixnu-' + args.machine)), *cells, ('compatible', string('linux,dummy-virt'))], [
