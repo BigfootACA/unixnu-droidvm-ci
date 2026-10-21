@@ -56,6 +56,39 @@ DIRECTORIES=(
 for directory in "${DIRECTORIES[@]}"; do
   sudo mkdir -p "$MNT/$directory"
 done
+for directory in containers/Bundle containers/Temp; do
+  sudo mkdir -p "$MNT/$directory"
+done
+# Setup marked as done, as UniXNU scripts/seed-data-skip-setup.py does (docs/guide/skip-setup.md), so the first boot goes
+# to SpringBoard instead of the Setup app. SKIP_SETUP=0 keeps Setup.
+if [ "${SKIP_SETUP:-1}" = 1 ]; then
+  PREFS=$(mktemp -d)
+  python3 - "$PREFS" <<'PY'
+import plistlib, sys
+from pathlib import Path
+out = Path(sys.argv[1])
+BUILD = '21H461'
+prefs = {
+    'com.apple.purplebuddy': dict(SetupDone=True, SetupFinishedAllSteps=True, SetupVersion=11, daemonizeNeedsToRun=False),
+    'com.apple.purplebuddy.notbackedup': {key: False for key in (
+        'ShouldRunDiagnosticsMiniBuddy', 'ShouldRunHSA2MiniBuddy', 'ShouldRunKeychainSyncMiniBuddy', 'ShouldRunMesaMiniBuddy',
+        'ShouldRunPaymentMiniBuddy', 'ShouldRunStandardMiniBuddy', 'SilentICDPUpgrade')},
+    'com.apple.managedconfiguration.notbackedup': dict(LockdownActivationIndicatesCloudConfigurationAvailable=False),
+    'com.apple.springboard': dict(BKNoWatchdogs=True, FBLaunchWatchdogExceptions={'com.apple.purplebuddy': 100.0},
+                                  MCForceShowCloudConfigurationUI=False),
+    'com.apple.migration': dict(LastSystemVersion=BUILD,
+                                DMUserDataDisposition=dict(SyntheticDidUpgrade=False, buildVersion=BUILD)),
+}
+for name, values in prefs.items():
+    (out / f'{name}.plist').write_bytes(plistlib.dumps(values, fmt=plistlib.FMT_BINARY))
+PY
+  for name in com.apple.purplebuddy com.apple.purplebuddy.notbackedup com.apple.managedconfiguration.notbackedup \
+              com.apple.springboard com.apple.migration; do
+    sudo install -m 0600 -o 501 -g 501 "$PREFS/$name.plist" "$MNT/mobile/Library/Preferences/$name.plist"
+    rm -f -- "$PREFS/$name.plist"
+  done
+  rmdir -- "$PREFS"
+fi
 sudo chown -R 501:501 "$MNT/mobile"
 sudo chmod 1777 "$MNT/tmp" "$MNT/mobile/tmp"
 sudo find "$MNT" -maxdepth 2 | sort | head -80
