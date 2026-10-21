@@ -14,6 +14,8 @@ DEVICE=${3:-droidvm}
 WHAT=${4:-kernel}
 KEY=${ARTIFACT_KEY_FILE:-/home/bigfoot/unixnu-droidvm/.ci-artifact-key}
 REPO=${REPO:-BigfootACA/unixnu-droidvm-ci}
+# The LAN proxy is about 4x faster than the direct path to the artifact store; FETCH_PROXY= disables it.
+PROXY=${FETCH_PROXY-http://192.168.0.253:8080}
 WORK=$(mktemp -d)
 cleanup() {
   # Only the files this script creates, one by one, then the (empty) directory.
@@ -28,7 +30,7 @@ ID=$(gh api "repos/$REPO/actions/runs/$RUN/artifacts" --jq ".artifacts[] | selec
 for attempt in 1 2 3 4 5 6; do
   URL=$(curl -sS -o /dev/null -w '%{redirect_url}' -H "Authorization: Bearer $(gh auth token)" \
         "https://api.github.com/repos/$REPO/actions/artifacts/$ID/zip")
-  if curl -sS -C - -o "$WORK/artifact.zip" "$URL"; then break; fi
+  if curl -sS -C - ${PROXY:+-x "$PROXY"} -o "$WORK/artifact.zip" "$URL"; then break; fi
   echo "fetch-kernel: download interrupted, resuming ($attempt)" >&2
 done
 unzip -q -o "$WORK/artifact.zip" "$WHAT.tgz.enc" -d "$WORK"
