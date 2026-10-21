@@ -23,10 +23,10 @@ index 3bb9820..a781312 100644
  	dtrace_proc_exec(p);
  #endif
 diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
-index 760c339..88a2b75 100644
+index 760c339..f098c8b 100644
 --- a/bsd/kern/kern_exit.c
 +++ b/bsd/kern/kern_exit.c
-@@ -2202,6 +2202,13 @@ proc_exit(proc_t p)
+@@ -2202,6 +2202,20 @@ proc_exit(proc_t p)
  	proc_unlock(p);
  	pid = proc_getpid(p);
  	exitval = p->p_xstat;
@@ -34,7 +34,14 @@ index 760c339..88a2b75 100644
 +	{
 +		int exec_log = 0;
 +		if (PE_parse_boot_argn("exec-log", &exec_log, sizeof(exec_log)) && exec_log) {
-+			printf("exit: pid %d %s status %#x\n", proc_getpid(p), p->p_comm, exitval);
++			os_reason_t reason = p->p_exit_reason;
++			if (reason != OS_REASON_NULL) {
++				char *desc = exit_reason_get_string_desc(reason);
++				printf("exit: pid %d %s status %#x reason %u:%llu flags %#llx%s%s\n", proc_getpid(p), p->p_comm, exitval,
++				    reason->osr_namespace, reason->osr_code, reason->osr_flags, desc ? " " : "", desc ? desc : "");
++			} else {
++				printf("exit: pid %d %s status %#x\n", proc_getpid(p), p->p_comm, exitval);
++			}
 +		}
 +	}
  	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_COMMON,
