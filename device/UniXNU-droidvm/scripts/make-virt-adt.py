@@ -86,11 +86,18 @@ parser.add_argument('--dram-base', type=lambda value: int(value, 0), help='overr
 parser.add_argument('--dram-size', type=lambda value: int(value, 0), default=0x80000000)
 parser.add_argument('--owned-memory-size', type=lambda value: int(value, 0), default=0x40000000,
                     help='DarwinBoot window (chosen/darwinboot-memory-size): 256 MiB to 8 GiB in 2 MiB steps')
-parser.add_argument('--nvram-proxy', action='store_true', help='volatile CHRP NVRAM bank in /chosen, with /options')
+parser.add_argument('--no-nvram-proxy', dest='nvram_proxy', action='store_false',
+                    help='omit the volatile CHRP NVRAM bank in /chosen (present by default, as on sheng)')
 parser.add_argument('--vmm-present', action='store_true', help='report the hypervisor in /defaults (kern.hv_vmm_present)')
 parser.add_argument('--root-match-volume-uuid', type=uuid.UUID)
-parser.add_argument('--osenvironment', choices=['ramdisk', 'recoveryos', 'main'])
-parser.add_argument('--crypto-hash-method', choices=['sha2-384', 'sha1'])
+parser.add_argument('--osenvironment', choices=['ramdisk', 'recoveryos', 'main'], default='main')
+parser.add_argument('--crypto-hash-method', choices=['sha2-384', 'sha1'], default='sha2-384',
+                    help='Image4 hash algorithm read by the original AppleImage4 (the target iPad uses sha2-384)')
+parser.add_argument('--ipad-identity', action='store_true',
+                    help='iPad7,1 (J120) identity as UniXNU-sheng: model/target-type, security tuple, buttons, product artwork')
+parser.add_argument('--unique-chip-id', type=lambda value: int(value, 16),
+                    help='/chosen/unique-chip-id (8 bytes) with --chip-id (4 bytes): seeds IOPlatformUUID; software values')
+parser.add_argument('--chip-id', type=lambda value: int(value, 16))
 parser.add_argument('--virtio-mmio', type=int, default=0, metavar='N',
                     help='QEMU virt: describe the first N virtio-mmio transports (0x0a000000 + 0x200 * i) for NativeVirtioBlock')
 args = parser.parse_args()
@@ -100,6 +107,8 @@ if not 0x10000000 <= args.owned_memory_size <= 0x200000000 or args.owned_memory_
     parser.error('owned memory must be 256 MiB to 8 GiB, aligned to 2 MiB')
 if not 0 < args.timebase < 1 << 32:
     parser.error('timebase does not fit the u32 property')
+if (args.unique_chip_id is None) != (args.chip_id is None):
+    parser.error('--unique-chip-id and --chip-id go together')
 if args.virtio_mmio and (args.machine != 'qemu' or not 0 < args.virtio_mmio <= 32):
     parser.error('--virtio-mmio is 1..32 transports of QEMU virt')
 
@@ -129,14 +138,22 @@ def cpu(index):
                                   ('timebase-frequency', u32(args.timebase))])
 
 
+# /chosen as UniXNU-sheng's make-sheng-adt.py: the original AppleImage4, AMFI and configd read these.
 chosen = node('chosen', [
     ('random-seed', os.urandom(64)),
+    # Without these XNU never publishes IOPlatformUUID and gethostuuid() blocks callers that pass a zero timeout.
+    *([('unique-chip-id', u64(args.unique_chip_id)), ('chip-id', u32(args.chip_id))] if args.unique_chip_id is not None else []),
+    ('osenvironment', string(args.osenvironment)),
+    # Security status of a dev-fused, undemoted board (0, 0, 1, 1), as on sheng.
+    *([('certificate-production-status', u32(0)), ('effective-production-status-ap', u32(0)),
+       ('certificate-security-mode', u32(1)), ('effective-security-mode-sep', u32(1))] if args.ipad_identity else []),
     ('darwinboot-memory-size', u64(args.owned_memory_size)),
     ('dram-base', u64(dram_base)),
     ('dram-size', u64(args.dram_size)),
-    *([('osenvironment', string(args.osenvironment))] if args.osenvironment else []),
+    ('crypto-hash-method', string(args.crypto_hash_method)),
     *root_matching,
-    *([('crypto-hash-method', string(args.crypto_hash_method))] if args.crypto_hash_method else []),
+    # Strict policy for the original AMFI: platform code only.
+    ('amfi-only-platform-code', u32(1)),
     *(empty_nvram_proxy() if args.nvram_proxy else []),
 ], [node('memory-map'), node('manifest-properties')])
 
@@ -155,13 +172,26 @@ arm_io = node('arm-io', [('device_type', string('virt-io')), *cells, ('ranges', 
                   ('dma-coherent', b'')]),
 ])
 
-tree = node('device-tree', [('model', string('unixnu-' + args.machine)), *cells, ('compatible', string('linux,dummy-virt'))], [
+# hw.product/hw.target come from the root model/target-type; libMobileGestalt prefix-matches iPad.
+identity = [('model', string('iPad7,1')), ('target-type', string('J120'))] if args.ipad_identity else \
+           [('model', string('unixnu-' + args.machine))]
+product_name = 'iPad Pro (12.9-inch) (2nd generation)' if args.ipad_identity else layout['product']
+tree = node('device-tree', [*identity, *cells, ('compatible', string('linux,dummy-virt'))], [
     chosen,
     node('cpus', children=[cpu(index) for index in range(args.smp)]),
     node('psci', [('compatible', string('arm,psci-1.0')), ('method', string('hvc'))]),
-    node('defaults', [('vmm-present', u32(1))] if args.vmm_present else []),
-    *([node('options')] if args.nvram_proxy else []),
-    node('product', [('product-name', string(layout['product'])), ('model', string('linux,dummy-virt'))]),
+    # No suspend/resume on this board.
+    node('defaults', [('sleep-disabled', u32(1)), *([('vmm-present', u32(1))] if args.vmm_present else [])]),
+    node('options'),
+    *([node('buttons', [('compatible', string('buttons')), ('device_type', string('buttons')),
+                        ('button-names', b'hold\0voldown\0volup\0menu\0'), ('home-button-type', u32(2))])]
+      if args.ipad_identity else []),
+    # The original AppleImage4 panics without a product node.
+    node('product', [('product-name', string(product_name)), ('model', string('linux,dummy-virt')),
+                     *([('product-description', string(product_name)), ('artwork-device-idiom', string('pad')),
+                        ('artwork-device-subtype', u32(2732)), ('artwork-scale-factor', u32(2)),
+                        ('artwork-display-gamut', string('P3')), ('compatible-device-fallback', string('iPad6,7')),
+                        ('thin-bezel', u32(1))] if args.ipad_identity else [])]),
     arm_io,
 ])
 args.output.parent.mkdir(parents=True, exist_ok=True)
