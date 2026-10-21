@@ -4,7 +4,8 @@
 #   run-qemu-kvm.sh ESP_DIR [LOG] [-- extra qemu arguments]
 #
 # highmem=off keeps the PCIe ECAM (0x3f000000) and the BARs below 4 GiB, where the ADT describes them.
-# Environment: CPUS (1), MEM_MIB (2048), TIMEOUT (seconds, 120), ACCEL (kvm), CPU (host), FIRMWARE (AAVMF code image).
+# Environment: CPUS (1), MEM_MIB (2048), TIMEOUT (seconds, 120), ACCEL (kvm), CPU (host), FIRMWARE (AAVMF code image),
+# SCREENSHOT (PPM path) with SCREENSHOT_AT (seconds after start, comma separated: one file per time, suffixed).
 # The serial console goes to LOG (default ESP_DIR/../serial.log) and to stdout.
 set -euo pipefail
 ESP=$(realpath "$1")
@@ -31,10 +32,29 @@ if [ -d "$ESP" ]; then
 else
   ESP_DRIVE="file=$ESP"                      # a disk image (scripts/make-esp-image.sh)
 fi
+MONITOR=(-monitor none)
+if [ -n "${SCREENSHOT:-}" ]; then
+  SOCKET=$WORK/monitor.sock
+  rm -f "$SOCKET"
+  MONITOR=(-monitor "unix:$SOCKET,server=on,wait=off")
+  python3 - "$SOCKET" "$SCREENSHOT" "${SCREENSHOT_AT:-60}" <<'PY' &
+import socket, sys, time
+sock, path, times = sys.argv[1], sys.argv[2], [float(t) for t in sys.argv[3].split(',')]
+start = time.time()
+for index, at in enumerate(times):
+    time.sleep(max(0, start + at - time.time()))
+    target = path if len(times) == 1 else path.replace('.ppm', f'-{int(at)}s.ppm')
+    try:
+        s = socket.socket(socket.AF_UNIX); s.connect(sock)
+        s.sendall(f'screendump {target}\n'.encode()); time.sleep(1); s.close()
+    except OSError as error:
+        print('screenshot failed:', error, file=sys.stderr)
+PY
+fi
 set +e
 timeout --foreground "$TIMEOUT" qemu-system-aarch64 \
   -M virt,gic-version=3,virtualization=off,secure=off,highmem=off -accel "$ACCEL" -cpu "$CPU" \
-  -m "$MEM_MIB" -smp "$CPUS" -display none -monitor none -nic none -no-reboot \
+  -m "$MEM_MIB" -smp "$CPUS" -display none "${MONITOR[@]}" -nic none -no-reboot \
   -chardev stdio,id=ser0,logfile="$LOG",signal=off -serial chardev:ser0 \
   -drive if=pflash,format=raw,readonly=on,file="$CODE" \
   -drive if=pflash,format=raw,file="$VARS" \
