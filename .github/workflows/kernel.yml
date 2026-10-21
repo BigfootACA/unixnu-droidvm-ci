@@ -162,7 +162,7 @@ jobs:
           fi
           # Original IOMobileFramebufferLegacy ABI and bindings for NativeLegacyDisplay (needs IOMobileGraphicsFamily prelinked).
           if [ -f scripts/record-virt-display.py ]; then
-            python3 scripts/record-virt-display.py ../kernel/kernel.macho "$GITHUB_WORKSPACE/collect/audit" \
+            python3 scripts/record-virt-display.py ../kernel/kernel.macho "$GITHUB_WORKSPACE/collect/audit" 2>&1 \
               || echo "::warning::legacy display bindings not recorded"
           fi
 
