@@ -1,0 +1,126 @@
+name: kernel
+
+# Builds the UniXNU XNU kernel (unixnu build kernel) on a macOS runner.
+# The kernel links Apple kexts from the IPSW kernelcache, so the binaries are
+# uploaded encrypted with the ARTIFACT_KEY secret; only the logs are plain.
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: device repository (sheng = upstream UniXNU-sheng, droidvm = device/UniXNU-droidvm of this repo)
+        default: droidvm
+        type: choice
+        options: [droidvm, sheng]
+      defconfig:
+        description: defconfig name (empty = <device>_defconfig)
+        default: ''
+      unixnu_ref:
+        description: UniXNU commit or branch
+        default: fb2bb310564ce66779e472a021881cf7c5764919
+      sheng_ref:
+        description: UniXNU-sheng commit or branch
+        default: 7562a779ebdbdedc17c4c7274ba993acbbec8188
+      xcode:
+        description: Xcode application on the runner
+        default: /Applications/Xcode_15.4.app
+  push:
+    paths:
+      - 'device/**'
+      - 'local/**'
+
+jobs:
+  kernel:
+    runs-on: macos-14
+    timeout-minutes: 300
+    env:
+      DEVICE: ${{ inputs.device || 'droidvm' }}
+      UNIXNU_REF: ${{ inputs.unixnu_ref || 'fb2bb310564ce66779e472a021881cf7c5764919' }}
+      SHENG_REF: ${{ inputs.sheng_ref || '7562a779ebdbdedc17c4c7274ba993acbbec8188' }}
+      XCODE: ${{ inputs.xcode || '/Applications/Xcode_15.4.app' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Toolchain
+        run: |
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          brew install llvm lld cmake ninja unifdef mtools dtc
+          python3 -m pip install --upgrade pip
+
+      - name: Sources
+        run: |
+          git clone --filter=blob:none https://github.com/UniXNU/UniXNU.git UniXNU
+          git -C UniXNU checkout "$UNIXNU_REF"
+          git -C UniXNU submodule update --init --recursive --filter=blob:none
+          if [ "$DEVICE" = sheng ]; then
+            git clone --filter=blob:none https://github.com/UniXNU/UniXNU-sheng.git device
+            git -C device checkout "$SHENG_REF"
+            git -C device submodule update --init --recursive --filter=blob:none
+          else
+            cp -R ci/device/UniXNU-$DEVICE device
+          fi
+          # Local overrides of UniXNU modules (drivers/<name>, kits/<name>, scripts/...): the same layout as UniXNU.
+          if [ -d ci/local ]; then echo "UNIXNU_LOCAL=--local $PWD/ci/local" >> "$GITHUB_ENV"; fi
+          git -C UniXNU log --oneline -1
+
+      - name: Cache fetched sources
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/feeds
+          key: feeds-${{ hashFiles('UniXNU/feeds.toml', 'device/feeds.toml') }}
+
+      - name: Fetch
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig "${{ inputs.defconfig || format('{0}_defconfig', env.DEVICE) }}" -D ../device
+          ./unixnu fetch
+          ./unixnu status $UNIXNU_LOCAL || true
+
+      - name: Build kernel
+        working-directory: UniXNU
+        run: ./unixnu build kernel -j "$(sysctl -n hw.ncpu)" $UNIXNU_LOCAL
+
+      - name: Collect
+        if: always()
+        run: |
+          board=$(ls -d UniXNU/out/*/ | grep -v -E '/(feeds|ipsw)/$' | head -1)
+          echo "board dir: $board"
+          mkdir -p collect
+          [ -d "$board/logs" ] && cp -R "$board/logs" collect/logs || true
+          if [ -d "$board/tree/build" ]; then
+            (cd "$board/tree" && find build -maxdepth 4 \( -name '*.a' -o -name 'mach.*' -o -name '*.json' \) -type f -size -400M \
+               | tar -cf - -T -) > collect/build.tar || true
+          fi
+          [ -d "$board/kernel" ] && tar -cf collect/kernel.tar -C "$board" kernel || true
+          tar -czf binaries.tgz -C collect $(cd collect && ls | grep -v '^logs$') 2>/dev/null || true
+          if [ -n "$ARTIFACT_KEY" ] && [ -s binaries.tgz ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ARTIFACT_KEY -in binaries.tgz -out binaries.tgz.enc
+          fi
+          ls -la collect binaries.tgz* || true
+        env:
+          ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ env.DEVICE }}
+          path: collect/logs
+          if-no-files-found: ignore
+
+      - name: Upload binaries (encrypted)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ env.DEVICE }}
+          path: binaries.tgz.enc
+          if-no-files-found: ignore
+          retention-days: 14
