@@ -26,7 +26,7 @@ on:
         default: ''
       runner:
         description: macOS runner image
-        default: macos-15
+        default: macos-26
   push:
     paths:
       - 'device/**'
@@ -34,7 +34,7 @@ on:
 
 jobs:
   kernel:
-    runs-on: ${{ inputs.runner || 'macos-15' }}
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 300
     env:
       DEVICE: ${{ inputs.device || 'droidvm' }}
