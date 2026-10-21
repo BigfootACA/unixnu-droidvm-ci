@@ -29,7 +29,9 @@ parser.add_argument('--initrd', type=Path,
 parser.add_argument('--args', default='-v serial=3 debug=0x14e kt_fixed_zones=120', help='kernel command line')
 parser.add_argument('--title', default='UniXNU virt')
 parser.add_argument('--timeout', type=int, default=1, help='menu timeout in seconds')
-parser.epilog = 'Arguments after -- go to make-virt-adt.py (without --output).'
+parser.add_argument('--adt-tool', type=Path, default=HERE / 'make-virt-adt.py',
+                    help='ADT generator taking --output (default make-virt-adt.py; the mainline one is make-droidvm-adt.py)')
+parser.epilog = 'Arguments after -- go to the ADT tool (without --output).'
 split = sys.argv.index('--') if '--' in sys.argv else len(sys.argv)
 args = parser.parse_args(sys.argv[1:split])
 adt_args = sys.argv[split + 1:]
@@ -50,7 +52,7 @@ if args.trust_cache:
 if args.initrd:
     shutil.copyfile(args.initrd, payloads / 'scratch-data.img')
 initrd = 'initrd = "Payloads/scratch-data.img"\n' if args.initrd else ''
-subprocess.run([sys.executable, HERE / 'make-virt-adt.py', '--output', payloads / 'kernel.macho.adt', *adt_args], check=True)
+subprocess.run([sys.executable, args.adt_tool, '--output', payloads / 'kernel.macho.adt', *adt_args], check=True)
 (esp / 'EFI/UniXNU/unixnu.toml').write_text(f'''version = 1
 [boot]
 timeout = {args.timeout}

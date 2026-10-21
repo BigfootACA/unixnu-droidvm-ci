@@ -33,7 +33,11 @@ if len(removed) < len(DROPPED):
     raise SystemExit(f'expected archive builders not found: {removed}')
 board.write_text(text[:start] + '\n'.join(kept) + text[end:])
 config = device / 'configs' / defconfig
-config.write_text(config.read_text().rstrip('\n') + '\n\n# Reference candidate (ci/scripts/make-reference-device.py)\n' +
-                  ''.join(f'CONFIG_XNU_{name}=n\n' for name in DISABLED) + 'CONFIG_XNU_EXTRA_LD_ARCHIVES=""\n')
+original = config.read_text()
+# unixnu checks every *_ARCHIVE of the configuration after the builders ran, whether its option is on or not.
+archives = sorted(set(re.findall(r'^CONFIG_(XNU_\w+_ARCHIVE)=', original, re.M)))
+config.write_text(original.rstrip('\n') + '\n\n# Reference candidate (ci/scripts/make-reference-device.py)\n' +
+                  ''.join(f'CONFIG_XNU_{name}=n\n' for name in DISABLED) +
+                  ''.join(f'CONFIG_{name}=""\n' for name in archives) + 'CONFIG_XNU_EXTRA_LD_ARCHIVES=""\n')
 print('dropped archive builders:', *removed, sep='\n  ')
 print('kept:', *[re.sub(r'\s+', ' ', line).strip() for line in kept if line.strip().startswith('"')], sep='\n  ')
