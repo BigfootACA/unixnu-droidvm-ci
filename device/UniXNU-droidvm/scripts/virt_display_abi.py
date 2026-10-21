@@ -26,6 +26,10 @@ FIXED_BINDINGS = {'__ZN25IOMobileFramebufferLegacyC2EPK11OSMetaClass': 0xfffffff
                   '__ZN25IOMobileFramebufferLegacyD2Ev': 0xfffffff005786618,
                   '__ZN25IOMobileFramebufferLegacy10gMetaClassE': 0xfffffff006b35940}
 SURFACE_PREFIX = '_native_legacy_surface_'
+# The original IOSurface getters bound by address; other _native_legacy_surface_* names (e.g. the rejection observer)
+# are ordinary probe hooks.
+SURFACE_GETTERS = frozenset(SURFACE_PREFIX + name for name in
+                            ('descriptor', 'width', 'height', 'stride', 'allocation', 'format', 'planes'))
 
 
 def require(value, why):

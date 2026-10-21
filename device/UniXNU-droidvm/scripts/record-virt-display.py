@@ -21,7 +21,7 @@ import re
 import shutil
 import struct
 
-from virt_display_abi import (OUT, ROOT, SURFACE_PREFIX, classify, compiled_object, header, require, run, undefined)
+from virt_display_abi import (OUT, ROOT, SURFACE_GETTERS, SURFACE_PREFIX, classify, compiled_object, header, require, run, undefined)
 from native_prelink import backed_offset, exports, macho
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -98,7 +98,7 @@ for name, address, field, wide in [
     expected = (0xf9400000 if wide else 0xb9400000) | ((field // (8 if wide else 4)) << 10)
     require(read(address, 8) == struct.pack('<2I', expected, 0xd65f03c0), 'Exact original surface getter ' + name)
     bindings[SURFACE_PREFIX + name] = address
-surface_imports = {n for n in undefined(symbols) if n.startswith(SURFACE_PREFIX)}
+surface_imports = {n for n in undefined(symbols) if n in SURFACE_GETTERS}
 require(surface_imports <= set(bindings), f'Unqualified IOSurface getters: {sorted(surface_imports - set(bindings))}')
 
 

@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 
-from virt_display_abi import (OUT, RECORDED_AUDIT, RECORDED_BINDINGS, RECORDED_HEADER, ROOT, SURFACE_PREFIX, classify,
+from virt_display_abi import (OUT, RECORDED_AUDIT, RECORDED_BINDINGS, RECORDED_HEADER, ROOT, SURFACE_GETTERS, SURFACE_PREFIX, classify,
                               compiled_object, defined, late_object, macho, object_symbols, require, run, sha, undefined)
 
 OUT.mkdir(parents=True, exist_ok=True)
@@ -50,8 +50,8 @@ if all(path.is_file() for path in recorded):
     imports = undefined(symbols)
     legacy_imports = {name for name in imports if 'IOMobileFramebufferLegacy' in name}
     require(legacy_imports == set(bindings), f'Original-class imports outside the recorded bindings: {sorted(legacy_imports ^ set(bindings))}')
-    surface_imports = {name for name in imports if name.startswith(SURFACE_PREFIX)}
-    surface_bound = {name for name in bound if name.startswith(SURFACE_PREFIX)}
+    surface_imports = {name for name in imports if name in SURFACE_GETTERS}
+    surface_bound = {name for name in bound if name in SURFACE_GETTERS}
     require(surface_imports and surface_imports <= surface_bound, f'IOSurface getters not recorded: {sorted(surface_imports - surface_bound)}')
     require(set(bound) == set(bindings) | surface_bound, f'Unexpected recorded bindings: {sorted(set(bound) - set(bindings) - surface_bound)}')
     shutil.copyfile(RECORDED_BINDINGS, OUT / 'original-bindings.S')
@@ -89,7 +89,7 @@ if all(path.is_file() for path in recorded):
     probe_symbols = object_symbols(probe_raw, macho(probe_raw))
     late_raw = late.read_bytes()
     late_symbols = object_symbols(late_raw, macho(late_raw))
-    hooks = {name for name in imports if name.startswith('_native_legacy_') and not name.startswith(SURFACE_PREFIX)}
+    hooks = {name for name in imports if name.startswith('_native_legacy_') and name not in SURFACE_GETTERS}
     require(hooks <= defined(probe_symbols), f'Display hooks the probe does not define: {sorted(hooks - defined(probe_symbols))}')
     wanted = {name for name in undefined(probe_symbols) if name.startswith(('_native_legacy_', '__GLOBAL__sub_I_NativeLegacyDisplay'))}
     require(wanted <= defined(late_symbols), f'Probe imports NativeLegacyDisplay does not define: {sorted(wanted - defined(late_symbols))}')
