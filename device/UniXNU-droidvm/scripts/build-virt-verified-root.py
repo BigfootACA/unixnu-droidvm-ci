@@ -92,12 +92,11 @@ for source in (ROOT / 'kits/VerifiedRoot/src/verified_root.c', ROOT / 'kits/Veri
             index += 1
         elif value in ('-MF', '-MJ'):
             index += 1
-        elif value.startswith('-I') and not Path(record['directory'], value[2:]).is_dir():
-            pass   # an export directory the clean tree has not created yet (-Wmissing-include-dirs with -Werror)
         elif value not in ('-MD', '-MP'):
             command.append(value)
         index += 1
-    command += ['-I' + str(ROOT / 'kits/VerifiedRoot/include'), '-Werror']
+    # The bsd_init record names export directories a clean tree may not have created yet.
+    command += ['-I' + str(ROOT / 'kits/VerifiedRoot/include'), '-Werror', '-Wno-missing-include-dirs']
     result = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True)
     (OUT / (source.stem + '.log')).write_text(result.stdout + result.stderr)
     require(not result.returncode, result.stderr[-3500:])
