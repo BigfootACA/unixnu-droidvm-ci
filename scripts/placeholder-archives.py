@@ -28,6 +28,12 @@ for name, path in re.findall(r'^\s*(\w+)=(?:\$\{\w+:-)?\$ROOT/(build/[^\s}"]+\.[
         archive.parent.mkdir(parents=True, exist_ok=True)
         archive.write_bytes(b'!<arch>\n' if archive.suffix == '.a' else b'')
         created.append(path)
+# The Legacy display archive is linked only if build-report.json carries its hash (build-xnu-4k-baseline.sh).
+legacy = tree / 'build/native-legacy-display/libNativeLegacyDisplay.late.a'
+if legacy.exists() and not legacy.with_name('build-report.json').exists():
+    import hashlib, json
+    legacy.with_name('build-report.json').write_text(json.dumps(
+        dict(archive_sha256=hashlib.sha256(legacy.read_bytes()).hexdigest(), source_sha256={})) + '\n')
 # Archive paths the board's defconfig overrides (CONFIG_XNU_*_ARCHIVE), checked the same way.
 config = tree.parent / '.config'
 if config.is_file():

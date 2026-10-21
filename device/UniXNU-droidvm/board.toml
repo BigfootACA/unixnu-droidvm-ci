@@ -39,7 +39,7 @@ archives = [
   "build-arm-driver.py NativeVirtioBlock --verified-root --verified-root-bundle",
   "build-native-virtio-bindings.py --component NativeVirtioBlock --directory build/native-virtio-block-verified-bundle",
   "build-virtio-input.py",
-  "build-virt-stubs.py",
+  "build-virt-display.py",
   "build-libpthread-kernel.py",
 ]
 
@@ -64,4 +64,6 @@ roots = [
   "com.apple.security.sandbox",
   "com.apple.iokit.IOHIDFamily",
   "com.apple.iokit.IOHIDEventDriver",
+  "com.apple.iokit.IOMobileGraphicsFamily",
+  "com.apple.iokit.IOSurface",
 ]

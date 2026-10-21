@@ -160,6 +160,11 @@ jobs:
             cp build/native-hid-input/OriginalHidDeviceABI.h build/native-hid-input/abi-audit.json "$GITHUB_WORKSPACE/collect/audit/"
             cp build/native-hid-input/original-bindings.S "$GITHUB_WORKSPACE/collect/audit/hid-original-bindings.S"
           fi
+          # Original IOMobileFramebufferLegacy ABI and bindings for NativeLegacyDisplay (needs IOMobileGraphicsFamily prelinked).
+          if [ -f scripts/record-virt-display.py ]; then
+            python3 scripts/record-virt-display.py ../kernel/kernel.macho "$GITHUB_WORKSPACE/collect/audit" \
+              || echo "::warning::legacy display bindings not recorded"
+          fi
 
       - name: Upload storage audit
         if: always()
