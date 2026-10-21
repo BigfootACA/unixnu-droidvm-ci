@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import sys
 
-BUILDERS = {'build-virtio-gpu.py': '{tree}/build/virtio-gpu/libNativeVirtioGpu.a'}
+BUILDERS = {'build-virtio-pci-drivers.py': '{tree}/build/virtio-pci/libVirtioPciDrivers.a'}
 
 device, defconfig = Path(sys.argv[1]), sys.argv[2]
 board = device / 'board.toml'
