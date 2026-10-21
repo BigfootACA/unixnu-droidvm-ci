@@ -4,7 +4,7 @@
   EFI/BOOT/BOOTAA64.EFI                UniXNU.efi
   EFI/UniXNU/unixnu.toml               one xnu entry, DarwinBoot loaded as a driver
   EFI/UniXNU/Payloads/DarwinBoot.efi
-  EFI/UniXNU/Payloads/kernel.macho     and kernel.macho.adt (scripts/make-virt-adt.py)
+  EFI/UniXNU/Payloads/kernel.macho     and kernel.macho.adt (scripts/make-virt-adt.py), optional kernel.macho.trustcache
 
 The directory is used by QEMU through vvfat, or packed into a FAT image for crosvm.
 """
@@ -22,6 +22,8 @@ parser.add_argument('output', type=Path)
 parser.add_argument('--unixnu', type=Path, required=True, help='UniXNU.efi')
 parser.add_argument('--darwinboot', type=Path, required=True, help='DarwinBoot.efi')
 parser.add_argument('--kernel', type=Path, required=True, help='kernel Mach-O')
+parser.add_argument('--trust-cache', type=Path,
+                    help='trust bundle (make-trust-bundle.py), staged as kernel.macho.trustcache; pass --trust-cache to the ADT too')
 parser.add_argument('--args', default='-v serial=3 debug=0x14e kt_fixed_zones=120', help='kernel command line')
 parser.add_argument('--title', default='UniXNU virt')
 parser.add_argument('--timeout', type=int, default=1, help='menu timeout in seconds')
@@ -41,6 +43,8 @@ payloads.mkdir(parents=True)
 shutil.copyfile(args.unixnu, esp / 'EFI/BOOT/BOOTAA64.EFI')
 shutil.copyfile(args.darwinboot, payloads / 'DarwinBoot.efi')
 shutil.copyfile(args.kernel, payloads / 'kernel.macho')
+if args.trust_cache:
+    shutil.copyfile(args.trust_cache, payloads / 'kernel.macho.trustcache')
 subprocess.run([sys.executable, HERE / 'make-virt-adt.py', '--output', payloads / 'kernel.macho.adt', *adt_args], check=True)
 (esp / 'EFI/UniXNU/unixnu.toml').write_text(f'''version = 1
 [boot]

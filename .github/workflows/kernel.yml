@@ -106,6 +106,23 @@ jobs:
           gh api "$api/EXTERNAL_HEADERS/TrustCache?ref=xnu-8796.101.5" > "$sources/xnu-trustcache-8796.101.5.json"
           ls -la "$sources"
 
+      - name: Owner root policies
+        # VerifiedRoot manifests of the OS and SystemOS disks (scripts/make-virt-root.py on the host), published encrypted
+        # as the release asset root-policies/verified-root-inputs.tar.enc; build-virt-verified-root.py embeds them.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
+        run: |
+          if gh release view root-policies --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download root-policies --repo "$GITHUB_REPOSITORY" --pattern verified-root-inputs.tar.enc --dir "$RUNNER_TEMP"
+            inputs="UniXNU/out/$DEVICE/tree/build/verified-root-inputs"
+            mkdir -p "$inputs"
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ARTIFACT_KEY -in "$RUNNER_TEMP/verified-root-inputs.tar.enc" | tar -xz -C "$inputs"
+            ls -la "$inputs"
+          else
+            echo "no root-policies release"
+          fi
+
       - name: Build kernel
         working-directory: UniXNU
         run: |

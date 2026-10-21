@@ -90,6 +90,10 @@ parser.add_argument('--no-nvram-proxy', dest='nvram_proxy', action='store_false'
                     help='omit the volatile CHRP NVRAM bank in /chosen (present by default, as on sheng)')
 parser.add_argument('--vmm-present', action='store_true', help='report the hypervisor in /defaults (kern.hv_vmm_present)')
 parser.add_argument('--root-match-volume-uuid', type=uuid.UUID)
+parser.add_argument('--trust-cache', action='store_true',
+                    help='/chosen/memory-map/TrustCache placeholder, filled by DarwinBoot from kernel.macho.trustcache')
+parser.add_argument('--data-ramdisk', choices=['dense', 'packed'],
+                    help='/chosen/memory-map RAMDisk or PackedRAMDisk placeholder for a Data seed (ephemeral storage)')
 parser.add_argument('--osenvironment', choices=['ramdisk', 'recoveryos', 'main'], default='main')
 parser.add_argument('--crypto-hash-method', choices=['sha2-384', 'sha1'], default='sha2-384',
                     help='Image4 hash algorithm read by the original AppleImage4 (the target iPad uses sha2-384)')
@@ -144,6 +148,7 @@ chosen = node('chosen', [
     # Without these XNU never publishes IOPlatformUUID and gethostuuid() blocks callers that pass a zero timeout.
     *([('unique-chip-id', u64(args.unique_chip_id)), ('chip-id', u32(args.chip_id))] if args.unique_chip_id is not None else []),
     ('osenvironment', string(args.osenvironment)),
+    *([('ephemeral-storage', u32(1))] if args.data_ramdisk else []),
     # Security status of a dev-fused, undemoted board (0, 0, 1, 1), as on sheng.
     *([('certificate-production-status', u32(0)), ('effective-production-status-ap', u32(0)),
        ('certificate-security-mode', u32(1)), ('effective-security-mode-sep', u32(1))] if args.ipad_identity else []),
@@ -155,7 +160,9 @@ chosen = node('chosen', [
     # Strict policy for the original AMFI: platform code only.
     ('amfi-only-platform-code', u32(1)),
     *(empty_nvram_proxy() if args.nvram_proxy else []),
-], [node('memory-map'), node('manifest-properties')])
+], [node('memory-map', [*([('PackedRAMDisk' if args.data_ramdisk == 'packed' else 'RAMDisk', bytes(16))] if args.data_ramdisk else []),
+                          *([('TrustCache', bytes(16))] if args.trust_cache else [])]),
+      node('manifest-properties')])
 
 cells = [('#address-cells', u32(2)), ('#size-cells', u32(2))]  # IOKit parses every reg as 64-bit pairs
 arm_io = node('arm-io', [('device_type', string('virt-io')), *cells, ('ranges', u64(0, io_base, layout['io_size']))], [

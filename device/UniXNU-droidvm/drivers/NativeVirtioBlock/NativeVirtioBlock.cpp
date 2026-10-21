@@ -290,7 +290,7 @@ void NativeVirtioBlock::startSiblings(IOService *provider)
   for (unsigned index = 1; index < total && index < 8; ++index) {
     NativeVirtioBlock *sibling = new NativeVirtioBlock;
     OSNumber *number = OSNumber::withNumber(index, 32);
-    bool started = sibling && number && sibling->init() && sibling->setProperty(pciIndexKey, number) &&
+    bool started = sibling && number && sibling->init(nullptr) && sibling->setProperty(pciIndexKey, number) &&
                    sibling->attach(provider);
     if (started && !sibling->start(provider)) {
       sibling->detach(provider);
