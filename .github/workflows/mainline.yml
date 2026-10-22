@@ -36,6 +36,7 @@ on:
       - 'scripts/make-reference-device.py'
       - 'scripts/owner-policy-dirs.py'
       - 'scripts/mainline-bootstrap-placeholders.py'
+      - 'scripts/macos-root-probe.py'
 
 permissions:
   contents: write
@@ -138,6 +139,9 @@ jobs:
           mkdir -p "$inputs"
           openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ARTIFACT_KEY -in "$RUNNER_TEMP/verified-root-inputs.tar.enc" | tar -xz -C "$inputs"
           python3 ci/scripts/owner-policy-dirs.py "$inputs" "UniXNU/out/$BOARD/tree" "${{ matrix.root }}"
+          if [ "${{ matrix.root }}" = macos ]; then
+            python3 ci/scripts/macos-root-probe.py UniXNU/scripts/build-verified-root-probe.py device/scripts/build-verified-root-probe.py
+          fi
 
       - name: Reference candidate
         working-directory: UniXNU
