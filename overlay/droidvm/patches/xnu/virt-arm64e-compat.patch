@@ -1,0 +1,249 @@
+diff --git a/bsd/dev/arm/kern_machdep.c b/bsd/dev/arm/kern_machdep.c
+index 336b1cc..2a5b71b 100644
+--- a/bsd/dev/arm/kern_machdep.c
++++ b/bsd/dev/arm/kern_machdep.c
+@@ -89,6 +89,9 @@ grade_binary(cpu_type_t exectype, cpu_subtype_t execsubtype, cpu_subtype_t execf
+ 				return 10;
+ 			case CPU_SUBTYPE_ARM64_ALL:
+ 				return 9;
++			case CPU_SUBTYPE_ARM64E:
++				/* arm64e runs unauthenticated (osfmk/arm64/sleh.c arm64e-compat) */
++				return 8;
+ 			}
+ 			break;
+ 
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index ae94c7e..3c03e47 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -61,6 +61,8 @@
+ #include <vm/pmap.h>
+ #include <vm/vm_fault.h>
+ #include <vm/vm_kern.h>
++#include <vm/vm_map.h>
++#include <vm/vm_protos.h>
+ 
+ #include <sys/errno.h>
+ #include <sys/kdebug.h>
+@@ -969,6 +971,210 @@ sleh_synchronous(arm_context_t *context, uint32_t esr, vm_offset_t far, __unused
+ #endif /* CONFIG_SPTM */
+ }
+ 
++/*
++ * arm64e user code on a CPU without FEAT_PAuth (or the v8.3+ instructions a
++ * macOS userland is built with): the non-hint pointer authentication forms
++ * and LDAPR are UNDEFINED there. Each such instruction is rewritten in place,
++ * once, to an equivalent that does not authenticate (pointers are never
++ * signed, the hint-space PAC instructions being NOPs), or emulated when no
++ * single-instruction equivalent exists. TUNABLE arm64e-compat (default on).
++ */
++TUNABLE(bool, virt_arm64e_compat, "arm64e-compat", true);
++TUNABLE(bool, virt_arm64e_compat_log, "arm64e-compat-log", false);
++
++static uint64_t
++virt_compat_xreg(arm_saved_state64_t *ss, unsigned reg, bool sp)
++{
++	if (reg < 29) {
++		return ss->x[reg];
++	}
++	return reg == 29 ? ss->fp : reg == 30 ? ss->lr : (sp ? ss->sp : 0);
++}
++
++static void
++virt_compat_set_xreg(arm_saved_state64_t *ss, unsigned reg, uint64_t value, bool sp)
++{
++	if (reg < 29) {
++		ss->x[reg] = value;
++	} else if (reg == 29) {
++		ss->fp = value;
++	} else if (reg == 30) {
++		ss->lr = value;
++	} else if (sp) {
++		ss->sp = value;
++	}
++}
++
++static bool
++virt_compat_patch(arm_saved_state_t *state, uint32_t replacement)
++{
++	pmap_paddr_t pa = pmap_find_pa(vm_map_pmap(current_map()), get_saved_state_pc(state));
++	if (pa == 0 || !pmap_valid_address(pa)) {
++		return false;
++	}
++	volatile uint32_t *kva = (volatile uint32_t *)phystokv(pa);
++	*kva = replacement;
++	CleanPoU_DcacheRegion((vm_offset_t)kva, sizeof(uint32_t));
++	/* The instruction cache may alias by virtual address: invalidate all of it (inner shareable). */
++	InvalidatePoU_Icache();
++	return true;
++}
++
++static uint32_t
++virt_compat_replacement(uint32_t instr)
++{
++	/* PACIA..AUTDB, PACIZA..AUTDZB, XPACI, XPACD: Xd is left as is */
++	if ((instr & 0xFFFFC000) == 0xDAC10000 || (instr & 0xFFFFFBE0) == 0xDAC143E0) {
++		return 0xD503201F;
++	}
++	/* PACGA Xd, Xn, Xm -> MOV Xd, XZR */
++	if ((instr & 0xFFE0FC00) == 0x9AC03000) {
++		return 0xAA1F03E0 | (instr & 0x1F);
++	}
++	/* BRAA/BRAB/BLRAA/BLRAB/BRAAZ/BRABZ/BLRAAZ/BLRABZ/RETAA/RETAB -> BR/BLR/RET */
++	if ((instr & 0xFE9FF800) == 0xD61F0800) {
++		uint32_t opc = instr & 0x00600000;
++		if (opc == 0x00400000) {
++			return 0xD65F03C0;
++		}
++		if (opc != 0x00600000) {
++			return 0xD61F0000 | opc | (instr & 0x3E0);
++		}
++		return 0;
++	}
++	/* LDRAA/LDRAB Xt, [Xn, #simm10 * 8]{!} -> LDR / LDUR / LDR pre-index when in range */
++	if ((instr & 0xFF200400) == 0xF8200400) {
++		int32_t off = (int32_t)(((instr >> 12) & 0x1FF) | ((instr >> 13) & 0x200));
++		off = (off << 22) >> 19;
++		uint32_t rnrt = instr & 0x3FF;
++		if (instr & 0x800) {
++			return (off >= -256 && off <= 255) ? (0xF8400C00 | (((uint32_t)off & 0x1FF) << 12) | rnrt) : 0;
++		}
++		if (off >= 0) {
++			return 0xF9400000 | (((uint32_t)off >> 3) << 10) | rnrt;
++		}
++		return off >= -256 ? (0xF8400000 | (((uint32_t)off & 0x1FF) << 12) | rnrt) : 0;
++	}
++	/* LDAPR{B,H,W,X} -> LDAR{B,H,W,X} */
++	if ((instr & 0x3FFFFC00) == 0x38BFC000) {
++		return (instr & 0xC00003FF) | 0x08DFFC00;
++	}
++	/* LDAPUR/STLUR with a zero offset (no sign extension) -> LDAR/STLR */
++	if ((instr & 0x3FFFFC00) == 0x19400000) {
++		return (instr & 0xC00003FF) | 0x08DFFC00;
++	}
++	if ((instr & 0x3FFFFC00) == 0x19000000) {
++		return (instr & 0xC00003FF) | 0x089FFC00;
++	}
++	/* SB -> ISB */
++	if (instr == 0xD50330FF) {
++		return 0xD5033FDF;
++	}
++	/* MSR DIT, #imm and MSR DIT, Xt -> NOP; MRS Xt, DIT -> MOV Xt, #0 */
++	if ((instr & 0xFFFFF0FF) == 0xD503405F || (instr & 0xFFFFFFE0) == 0xD51B42A0) {
++		return 0xD503201F;
++	}
++	if ((instr & 0xFFFFFFE0) == 0xD53B42A0) {
++		return 0xD2800000 | (instr & 0x1F);
++	}
++	/* MRS Xt, CNTVCTSS_EL0 / CNTPCTSS_EL0 -> MRS Xt, CNTVCT_EL0 / CNTPCT_EL0 */
++	if ((instr & 0xFFFFFFE0) == 0xD53BE0C0) {
++		return 0xD53BE040 | (instr & 0x1F);
++	}
++	if ((instr & 0xFFFFFFE0) == 0xD53BE0A0) {
++		return 0xD53BE020 | (instr & 0x1F);
++	}
++	return 0;
++}
++
++static bool
++virt_compat_emulate(arm_saved_state_t *state, uint32_t instr)
++{
++	arm_saved_state64_t *ss = saved_state64(state);
++	/* CFINV, XAFLAG, AXFLAG */
++	if (instr == 0xD500401F) {
++		ss->cpsr ^= PSR64_C;
++	} else if (instr == 0xD500403F) {
++		uint32_t n = ss->cpsr & PSR64_N, z = ss->cpsr & PSR64_Z, c = ss->cpsr & PSR64_C, v = ss->cpsr & PSR64_V;
++		uint32_t nn = (!c && !z) ? PSR64_N : 0;
++		uint32_t nz = (z && c) ? PSR64_Z : 0;
++		uint32_t nc = (c || z) ? PSR64_C : 0;
++		uint32_t nv = (!c && z) ? PSR64_V : 0;
++		(void)n; (void)v;
++		ss->cpsr = (ss->cpsr & ~(PSR64_N | PSR64_Z | PSR64_C | PSR64_V)) | nn | nz | nc | nv;
++	} else if (instr == 0xD500405F) {
++		uint32_t z = ss->cpsr & PSR64_Z, c = ss->cpsr & PSR64_C, v = ss->cpsr & PSR64_V;
++		uint32_t nz = (z || v) ? PSR64_Z : 0;
++		uint32_t nc = (c && !v) ? PSR64_C : 0;
++		ss->cpsr = (ss->cpsr & ~(PSR64_N | PSR64_Z | PSR64_C | PSR64_V)) | nz | nc;
++	} else if ((instr & 0xFF200400) == 0xF8200400) {
++		/* LDRAA/LDRAB out of the LDR/LDUR offset range */
++		int32_t off = (int32_t)(((instr >> 12) & 0x1FF) | ((instr >> 13) & 0x200));
++		off = (off << 22) >> 19;
++		unsigned rn = (instr >> 5) & 0x1F, rt = instr & 0x1F;
++		uint64_t address = virt_compat_xreg(ss, rn, true) + (int64_t)off, value;
++		if (copyin(address, &value, sizeof(value))) {
++			return false;
++		}
++		if (instr & 0x800) {
++			virt_compat_set_xreg(ss, rn, address, true);
++		}
++		virt_compat_set_xreg(ss, rt, value, false);
++	} else if ((instr & 0x3F200C00) == 0x19000000) {
++		/* LDAPUR, STLUR with an offset: a plain access between barriers */
++		unsigned size = 1u << (instr >> 30), opc = (instr >> 22) & 3;
++		unsigned rn = (instr >> 5) & 0x1F, rt = instr & 0x1F;
++		int64_t off = ((int64_t)(int32_t)(instr << 11)) >> 23;
++		uint64_t address = virt_compat_xreg(ss, rn, true) + off, value = 0;
++		__builtin_arm_dmb(DMB_ISH);
++		if (opc == 0) {
++			value = virt_compat_xreg(ss, rt, false);
++			if (copyout(&value, address, size)) {
++				return false;
++			}
++		} else {
++			if (copyin(address, &value, size)) {
++				return false;
++			}
++			if (opc >= 2 && size < 8) {
++				unsigned shift = 64 - size * 8;
++				value = (uint64_t)(((int64_t)(value << shift)) >> shift);
++				if (opc == 3) {
++					value &= 0xFFFFFFFFull;
++				}
++			}
++			virt_compat_set_xreg(ss, rt, value, false);
++		}
++		__builtin_arm_dmb(DMB_ISH);
++	} else {
++		return false;
++	}
++	add_saved_state_pc(state, 4);
++	return true;
++}
++
++static bool
++virt_arm64e_compat_handle(arm_saved_state_t *state, uint32_t instr)
++{
++	if (!virt_arm64e_compat || !PSR64_IS_USER64(get_saved_state_cpsr(state))) {
++		return false;
++	}
++	uint32_t replacement = virt_compat_replacement(instr);
++	if (replacement != 0 && virt_compat_patch(state, replacement)) {
++		if (virt_arm64e_compat_log) {
++			printf("arm64e-compat: %s[%d] pc 0x%llx %08x -> %08x\n", proc_best_name(current_proc()),
++			    proc_pid(current_proc()), get_saved_state_pc(state), instr, replacement);
++		}
++		return true;
++	}
++	if (virt_compat_emulate(state, instr)) {
++		return true;
++	}
++	printf("arm64e-compat: %s[%d] undefined instruction %08x at pc 0x%llx\n", proc_best_name(current_proc()),
++	    proc_pid(current_proc()), instr, get_saved_state_pc(state));
++	return false;
++}
++
+ /*
+  * Uncategorized exceptions are a catch-all for general execution errors.
+  * ARM64_TODO: For now, we assume this is for undefined instruction exceptions.
+@@ -1046,6 +1252,10 @@ handle_uncategorized(arm_saved_state_t *state)
+ 		}
+ 	}
+ 
++	if (virt_arm64e_compat_handle(state, instr)) {
++		return;
++	}
++
+ 	/*
+ 	 * Check for GDB breakpoint via illegal opcode.
+ 	 */

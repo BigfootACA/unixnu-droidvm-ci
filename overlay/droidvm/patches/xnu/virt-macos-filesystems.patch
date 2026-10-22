@@ -1,0 +1,13 @@
+diff --git a/config/MASTER.arm64.bcm2837 b/config/MASTER.arm64.bcm2837
+index a185cf4..8c18631 100644
+--- a/config/MASTER.arm64.bcm2837
++++ b/config/MASTER.arm64.bcm2837
+@@ -24,7 +24,7 @@
+ #  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel ]
+ #  BSD_DEV =        [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
+ #  BSD_DEBUG =      [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
+-#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs]
++#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs config_firmlinks config_rosv_startup config_mount_vm config_mount_prebootrecovery config_dataless_files config_mnt_suid config_volfs config_searchfs config_ext_resolver config_appledouble nullfs config_imgsrc_access config_triggers ]
+ #  FILESYS_RELEASE= [ FILESYS_BASE ]
+ #  FILESYS_DEV =    [ FILESYS_BASE config_union_mounts fdesc ]
+ #  FILESYS_DEBUG =  [ FILESYS_BASE config_union_mounts fdesc ]

@@ -8,6 +8,9 @@ name: mainline
 # without its native storage/display drivers. It is kept encrypted as the release asset reference-candidate/
 # reference-kernel.tgz.enc; when missing (or with rebuild_reference) it is linked first from a reduced copy of the device
 # repository (scripts/make-reference-device.py) in the same tree.
+#
+# Two kernels per run: root=ios (iPadOS 21H461) and root=macos (macOS 14.6.1 23G93 userland on the same kernel and kexts).
+# They differ only in the owner root policies baked into the kernel: release root-policies and root-policies-macos.
 
 on:
   workflow_dispatch:
@@ -41,9 +44,14 @@ jobs:
   kernel:
     runs-on: macos-26
     timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [ios, macos]
     env:
       BOARD: droidvm
-      LABEL: mainline
+      LABEL: ${{ matrix.root == 'ios' && 'mainline' || 'mainline-macos' }}
+      POLICIES: ${{ matrix.root == 'ios' && 'root-policies' || 'root-policies-macos' }}
       UNIXNU_REPO: ${{ inputs.unixnu_repo || 'Droid-VM/UniXNU' }}
       UNIXNU_REF: ${{ inputs.unixnu_ref || 'wip/droidvm' }}
       DEVICE_REPO: ${{ inputs.device_repo || 'Droid-VM/UniXNU-droidvm' }}
@@ -123,9 +131,9 @@ jobs:
           gh api "$api/EXTERNAL_HEADERS/TrustCache?ref=xnu-8796.101.5" > "$sources/xnu-trustcache-8796.101.5.json"
 
       - name: Owner root policies
-        # build/verified-root-{os,systemos} from the owner manifests published encrypted as root-policies/verified-root-inputs.tar.enc.
+        # build/verified-root-{os,systemos} from the owner manifests published encrypted as $POLICIES/verified-root-inputs.tar.enc.
         run: |
-          gh release download root-policies --repo "$GITHUB_REPOSITORY" --pattern verified-root-inputs.tar.enc --dir "$RUNNER_TEMP"
+          gh release download "$POLICIES" --repo "$GITHUB_REPOSITORY" --pattern verified-root-inputs.tar.enc --dir "$RUNNER_TEMP"
           inputs="$RUNNER_TEMP/verified-root-inputs"
           mkdir -p "$inputs"
           openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ARTIFACT_KEY -in "$RUNNER_TEMP/verified-root-inputs.tar.enc" | tar -xz -C "$inputs"
