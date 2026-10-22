@@ -5,7 +5,7 @@
 
 The probe builder pins the 21H461 OS and SystemOS images that its policies must describe. For the macOS root (CI matrix
 root=macos) the policies describe the 23G93 OS disk and the SystemOS disk of make-macos-systemos.sh instead (the same pins
-as owner-policy-dirs.py). DESTINATION goes to the device repository's scripts/, which the unixnu tree copies over the
+as owner-policy-dirs.py), and its hash tables are placed after the kernel text. DESTINATION goes to the device repository's scripts/, which the unixnu tree copies over the
 UniXNU one; the upstream file is left as is.
 """
 from pathlib import Path
@@ -20,6 +20,9 @@ REPLACEMENTS = [
     (" else 806400\n", " else 1835008\n", 1),
     ("extra_meta['blocks_verified'] != 806400", "extra_meta['blocks_verified'] != 1835008", 1),
     ("image_bytes=3303014400", "image_bytes=7516192768", 1),
+    # The macOS hash tables (143 MB against 73 MB) in __DATA_CONST push the late archives' code out of B/BL range
+    # (+/-128 MB) of the prelinked kexts: keep them in __DATA, after the kernel text.
+    (".section __DATA_CONST,__const\n", ".section __DATA,__data\n", 1),
 ]
 
 source, destination = map(Path, sys.argv[1:3])
