@@ -497,15 +497,21 @@ bool NativeVirtioBlock::configureVerification()
   vm_size_t tableBytes = round_page(static_cast<vm_size_t>(manifestBytes));
   if (tableBytes < manifestBytes || tableBytes > UINT64_MAX - 4096) return false;
   verifiedStorageBytes = tableBytes + 4096;
+  IOLog("NativeVirtioBlock: function %u: policy of %llu bytes, copying\n", transport.pciSlot(), manifestBytes);
   if (kmem_alloc(kernel_map, &verifiedStorage, verifiedStorageBytes,
       static_cast<kma_flags_t>(KMA_KOBJECT | KMA_DATA), VM_KERN_MEMORY_SECURITY) != KERN_SUCCESS) return false;
   memcpy(reinterpret_cast<void *>(verifiedStorage), manifest, manifestBytes);
+  IOLog("NativeVirtioBlock: function %u: policy copied, opening\n", transport.pciSlot());
   auto *key = reinterpret_cast<uint8_t *>(verifiedStorage + tableBytes);
   memcpy(key, verified_root_key, VR_KEY_BYTES);
   if (vm_map_protect(kernel_map, verifiedStorage, verifiedStorage + verifiedStorageBytes,
       VM_PROT_READ, TRUE) != KERN_SUCCESS) return false;
   if (vr_open(reinterpret_cast<const uint8_t *>(verifiedStorage), manifestBytes,
-      key, 1, &vr_xnu_crypto, &verified) != VR_OK || verified.image_bytes != capacity * 512) return false;
+      key, 1, &vr_xnu_crypto, &verified) != VR_OK || verified.image_bytes != capacity * 512) {
+    IOLog("NativeVirtioBlock: function %u: policy refused\n", transport.pciSlot());
+    return false;
+  }
+  IOLog("NativeVirtioBlock: function %u: policy opened\n", transport.pciSlot());
   verifiedSnapshot = static_cast<unsigned char *>(IOMalloc(transferSize));
   if (!verifiedSnapshot) return false;
   native_virtio_verified_manifest_pointer = verifiedStorage;
@@ -612,6 +618,7 @@ bool NativeVirtioBlock::start(IOService *provider)
   }
   ownsDevice = true;
   gate = IOLockAlloc();
+  if (gate && pci) IOLog("NativeVirtioBlock: function %u: configuring the queue\n", transport.pciSlot());
   if (!gate || !configureQueue()) {
     IOLog("NativeVirtioBlock: queue setup failed (status %#x; a read-only device and VIRTIO_F_VERSION_1 are required)\n",
           transportMapped() ? deviceStatus() : 0);
