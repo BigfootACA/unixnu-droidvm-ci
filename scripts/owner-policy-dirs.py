@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lay out the owner root policies in the form UniXNU scripts/build-verified-root-probe.py reads.
 
-    owner-policy-dirs.py INPUTS TREE
+    owner-policy-dirs.py INPUTS TREE [ios|macos]
 
 INPUTS is the decrypted release asset root-policies/verified-root-inputs.tar.enc (scripts/make-virt-root.py on the Linux
 host: os.manifest.bin, systemos.manifest.bin, trusted-key.bin, os.samples.bin, inputs.json). TREE is the unixnu build tree;
@@ -17,10 +17,18 @@ from pathlib import Path
 import shutil
 import sys
 
-EXPECTED = {'os': ('e5634d04a8ac35f024845f583394e0a35deb26a04cb0c00286a8674e25a9a4f2', 1483785),
-            'systemos': ('b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f', 806400)}
+ROOTS = {
+    # iPadOS 21H461: the OS member expanded, the Cryptex1,SystemOS member as is.
+    'ios': {'os': ('e5634d04a8ac35f024845f583394e0a35deb26a04cb0c00286a8674e25a9a4f2', 1483785),
+            'systemos': ('b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f', 806400)},
+    # macOS 23G93: the OS member expanded with its System volume renamed to the 21H461 OS UUID (apfs-volumes.py), and the
+    # SystemOS disk of make-macos-systemos.sh.
+    'macos': {'os': ('521945de060983ca09bd9a3f1541fe61d9e8c2fa385bc8a41b396936f19f1827', 2660361),
+              'systemos': ('2c1504f782ff8a9e43c0fad352b265b396692c0197fc971e3502cadc56a3816c', 1835008)},
+}
 
 inputs, tree = map(Path, sys.argv[1:3])
+EXPECTED = ROOTS[sys.argv[3] if len(sys.argv) > 3 else 'ios']
 records = json.loads((inputs / 'inputs.json').read_text())
 key = (inputs / 'trusted-key.bin').read_bytes()
 key_sha256 = hashlib.sha256(key).hexdigest()

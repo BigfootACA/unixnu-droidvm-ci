@@ -137,7 +137,7 @@ jobs:
           inputs="$RUNNER_TEMP/verified-root-inputs"
           mkdir -p "$inputs"
           openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ARTIFACT_KEY -in "$RUNNER_TEMP/verified-root-inputs.tar.enc" | tar -xz -C "$inputs"
-          python3 ci/scripts/owner-policy-dirs.py "$inputs" "UniXNU/out/$BOARD/tree"
+          python3 ci/scripts/owner-policy-dirs.py "$inputs" "UniXNU/out/$BOARD/tree" "${{ matrix.root }}"
 
       - name: Reference candidate
         working-directory: UniXNU
